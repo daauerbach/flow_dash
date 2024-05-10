@@ -1,7 +1,9 @@
 ---
 title: "FLOWdash Willapa"
 logo: assets/wdfw_logo_stacked_fullcolor.png
-format: dashboard
+format: 
+  dashboard:
+    orientation: columns
 theme: lux
 embed-resources: true
 
@@ -12,8 +14,6 @@ embed-resources: true
 
 library("tidyverse", quietly = T)
 theme_set(theme_minimal()) 
-
-###dir_data_common <- "~/T/DFW-Team WDFW Watershed Synthesis - data_common"
 
 # #workbook of basic site/station metadata: `usgs_sites`
 # readxl::read_excel("~/T/DFW-Team WDFW Watershed Synthesis - flow_trees_heat/usgs_sites_dailyQ_focal.xlsx") |> 
@@ -65,45 +65,47 @@ usgs_q_dv <- bind_rows(
 
 usgs_bfs <- readRDS("data/usgs_bfs_pred.rds")
 
-nwfsc_st <- readRDS("data/nwfsc_st_pred.rds")
+nwfsc_st <- readRDS("data/nwfsc_st_pred.rds") |> 
+  mutate(
+    year = as.character(year(date)), month = month(date), yday = yday(date)
+  )
 
+#use rangeslider()?
+#add_image?
 
-#makeplotly <- function(type, site, closure_date, log10 = F){
-  
-  d <- usgs_q_day |> filter(site_no==site) |> select(year, yday, {{ type }})
+makeplotly <- function(type, site, log10 = F){
+
+  d <- usgs_q_dv |> filter(site_no==site) |> select(year, yday, {{ type }})
   vals <- d |> pull({{type}})
 
   p <- plotly::plot_ly(d) |>
     plotly::layout(
-      shapes=list(
-        type='line',
-        x0=yday(closure_date), x1=yday(closure_date),
-        y0=min(vals, na.rm = T), y1=max(vals, na.rm = T),
-        line=list(dash='dot', width=1))
+      xaxis = list(title='Day of year'),
+      yaxis = list(title='cfs')
     )
 
   for(i in unique(d$year)){
     p <- plotly::add_lines(
-      p, name = i, x = ~yday, y = ~y, 
+      p, name = i, x = ~yday, y = ~y,
       data = filter(d, year == i) |> rename(y = {{type}})
     )
   }
-  
+
   if(site %in% unique(usgs_bfs$site_no)){
     p <- plotly::add_ribbons(
       p, name = "BFS_predCI", x = ~yday,
       ymin = ~q_bfs_pred05, ymax = ~q_bfs_pred95,
-      line = list(dash = "dash", color = "#505050FF", alpha = 0.2), 
+      line = list(dash = "dash", color = "#505050FF", alpha = 0.2),
       data = filter(usgs_bfs, site_no == site)
     )
     p <- plotly::add_lines(
-      p, name = "BFS_pred", x = ~yday, y = ~q_bfs_pred, 
-      line = list(dash = "dash", color = "#000000FF"), 
+      p, name = "BFS_pred", x = ~yday, y = ~q_bfs_pred,
+      line = list(dash = "dash", color = "#000000FF"),
       data = filter(usgs_bfs, site_no == site)
     )
   }
 
-  if (log10){ 
+  if (log10){
     p <- p |> plotly::layout(yaxis = list(type = "log"))
     }
 
@@ -188,4 +190,100 @@ nwfsc_st <- readRDS("data/nwfsc_st_pred.rds")
 
 ```
 
+# `r unite(sites,"no_nm")$no_nm[1]`
+
+## Column {width = 60%}
+
+```{r}
+#| title: Annual min Obs mean daily Q
+usgs_q_dv |> 
+  filter(site_no == sites$site_no[1], 
+         year != "2024"
+         ) |>
+  slice_min(order_by = q_dv_mean, n = 1, by = year, with_ties = F) |>
+  mutate(month = if_else(is.na(month), "med", month.abb[month]) |> 
+           factor(levels = c(month.abb[6:10], "med"))) |> 
+  select(year, month, min_cfs = q_dv_mean) |> 
+  plotly::plot_ly( type = "bar", x = ~year, y = ~min_cfs, color = ~month) |> 
+  plotly::rangeslider() |> 
+  plotly::layout(
+    #plot_bgcolor = "#c2dffc",
+    legend = list(title='month'),
+    xaxis = list(title='')
+  )
+```
+
+```{r}
+#| title: Annual max Pred daily T
+
+nwfsc_st |> 
+  filter(site_no == sites$site_no[1]) |> 
+  slice_max(order_by = st_pred, n = 1, by = year, with_ties = F) |>
+  mutate(month = if_else(is.na(month), "med", month.abb[month]) |> 
+           factor(levels = c(month.abb[6:10], "med"))) |> 
+  select(year, month, max_degC = st_pred) |> 
+  plotly::plot_ly( type = "bar", x = ~year, y = ~max_degC, color = ~month) |> 
+  plotly::rangeslider() |> 
+  plotly::layout(
+    #plot_bgcolor = "#f2f5c6",
+    legend = list(title='month'),
+    xaxis = list(title='')
+  )
+```
+
+## Column
+
+```{r}
+#| title: Mean daily Q
+makeplotly(type = "q_dv_mean", site = sites$site_no[1], log10 = T)
+```
+
+
+# `r unite(sites,"no_nm")$no_nm[2]`
+
+## Column {width = 60%}
+
+```{r}
+#| title: Annual min Obs mean daily Q
+usgs_q_dv |> 
+  filter(site_no == sites$site_no[2], 
+         year != "2024"
+         ) |>
+  slice_min(order_by = q_dv_mean, n = 1, by = year, with_ties = F) |>
+  mutate(month = if_else(is.na(month), "med", month.abb[month]) |> 
+           factor(levels = c(month.abb[6:10], "med"))) |> 
+  select(year, month, min_cfs = q_dv_mean) |> 
+  plotly::plot_ly( type = "bar", x = ~year, y = ~min_cfs, color = ~month) |> 
+  plotly::rangeslider() |> 
+  plotly::layout(
+    #plot_bgcolor = "#c2dffc",
+    legend = list(title='month'),
+    xaxis = list(title='')
+  )
+```
+
+```{r}
+#| title: Annual max Pred daily T
+
+nwfsc_st |> 
+  filter(site_no == sites$site_no[2]) |> 
+  slice_max(order_by = st_pred, n = 1, by = year, with_ties = F) |>
+  mutate(month = if_else(is.na(month), "med", month.abb[month]) |> 
+           factor(levels = c(month.abb[6:10], "med"))) |> 
+  select(year, month, max_degC = st_pred) |> 
+  plotly::plot_ly( type = "bar", x = ~year, y = ~max_degC, color = ~month) |> 
+  plotly::rangeslider() |> 
+  plotly::layout(
+    #plot_bgcolor = "#f2f5c6",
+    legend = list(title='month'),
+    xaxis = list(title='')
+  )
+```
+
+## Column
+
+```{r}
+#| title: Mean daily Q
+makeplotly(type = "q_dv_mean", site = sites$site_no[2], log10 = T)
+```
 
