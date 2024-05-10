@@ -1,0 +1,191 @@
+---
+title: "FLOWdash Willapa"
+logo: assets/wdfw_logo_stacked_fullcolor.png
+format: dashboard
+theme: lux
+embed-resources: true
+
+---
+
+```{r setup, include=FALSE, warning=FALSE, message=FALSE}
+#knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, fig.width = 10, fig.height = 13)
+
+library("tidyverse", quietly = T)
+theme_set(theme_minimal()) 
+
+###dir_data_common <- "~/T/DFW-Team WDFW Watershed Synthesis - data_common"
+
+# #workbook of basic site/station metadata: `usgs_sites`
+# readxl::read_excel("~/T/DFW-Team WDFW Watershed Synthesis - flow_trees_heat/usgs_sites_dailyQ_focal.xlsx") |> 
+#   select(site_no, station_nm) |> 
+#   mutate(station_nm = str_remove(station_nm, ", WA$") |> str_replace("RIVER", "R") |> str_to_title()) 
+
+sites <- data.frame(
+  site_no = c("12010000","12013500"),
+  station_nm = c("Naselle R Near Naselle", "Willapa R Near Willapa")
+)
+  
+q_obs_range <- c(as.Date("1979-01-01"), Sys.Date())
+
+#build uniform object inserting NAs for missing obs during q_obs_range
+#rebuild/overwrite y, m, and yday since `complete` inserts many NAs
+#then calc per site per CALENDAR year 
+# - cumulative sum of daily mean flow (weird but useful proxy for overall annual volume, 'wet/dry year')
+# - 7day moving average of daily mean flow
+usgs_q_dv <- list.files("data", pattern = "usgs_dailyQ", full.names = T) |> 
+  map_df(~readRDS(.x)) |> 
+  #group_by(site_no) |> summarise(dmin = min(date), dmax = max(date))
+  tidyr::complete(site_no, date = full_seq(q_obs_range, 1))|> 
+  mutate(
+    year = as.character(year(date)), month = month(date), yday = yday(date)
+    #,q_dv_mean = if_else(q_dv_mean < 0, NA_real_, q_dv_mean)
+  ) |> 
+  # mutate(
+  #   q_dv_mean_sum = cumsum(q_dv_mean),
+  #   #,q_dv_mean_7d = slider::slide_dbl(q_dv_mean, ~mean(., na.rm=T), .before = 3, .after = 3),
+  #   .by = c(site_no, year)
+  # ) |> 
+  left_join(sites, by = "site_no") |> 
+  select(site_no, station_nm, everything())
+#add yday median across years of daily val
+#could do 7day of this for pretty 'smooth' reference
+usgs_q_dv <- bind_rows(
+  usgs_q_dv,
+  usgs_q_dv |>
+    group_by(site_no, yday) |>
+    summarise(
+      year = "median",
+      across(
+        starts_with("q_dv"),
+        ~median(.,na.rm=T)
+      ),
+      .groups = "drop"
+    )
+)
+
+usgs_bfs <- readRDS("data/usgs_bfs_pred.rds")
+
+nwfsc_st <- readRDS("data/nwfsc_st_pred.rds")
+
+
+#makeplotly <- function(type, site, closure_date, log10 = F){
+  
+  d <- usgs_q_day |> filter(site_no==site) |> select(year, yday, {{ type }})
+  vals <- d |> pull({{type}})
+
+  p <- plotly::plot_ly(d) |>
+    plotly::layout(
+      shapes=list(
+        type='line',
+        x0=yday(closure_date), x1=yday(closure_date),
+        y0=min(vals, na.rm = T), y1=max(vals, na.rm = T),
+        line=list(dash='dot', width=1))
+    )
+
+  for(i in unique(d$year)){
+    p <- plotly::add_lines(
+      p, name = i, x = ~yday, y = ~y, 
+      data = filter(d, year == i) |> rename(y = {{type}})
+    )
+  }
+  
+  if(site %in% unique(usgs_bfs$site_no)){
+    p <- plotly::add_ribbons(
+      p, name = "BFS_predCI", x = ~yday,
+      ymin = ~q_bfs_pred05, ymax = ~q_bfs_pred95,
+      line = list(dash = "dash", color = "#505050FF", alpha = 0.2), 
+      data = filter(usgs_bfs, site_no == site)
+    )
+    p <- plotly::add_lines(
+      p, name = "BFS_pred", x = ~yday, y = ~q_bfs_pred, 
+      line = list(dash = "dash", color = "#000000FF"), 
+      data = filter(usgs_bfs, site_no == site)
+    )
+  }
+
+  if (log10){ 
+    p <- p |> plotly::layout(yaxis = list(type = "log"))
+    }
+
+  p
+}
+
+```
+
+```{r data_rebuild_q_dv, eval=FALSE}
+# #not `complete()` here since no reason to store potentially lots of NA for long qobsrange
+# walk(
+#   sites$site_no
+#   ,
+#   ~dataRetrieval::readNWISdv(
+#     .x, parameterCd = "00060",
+#     startDate = q_obs_range[1],
+#     endDate = q_obs_range[2]
+#     ) |>
+#     as_tibble() |>
+#     mutate(year = year(Date), month = month(Date), yday = yday(Date)) |>
+#     select(site_no, date = Date, year, month, yday, q_dv_mean = X_00060_00003) |>
+#     saveRDS(paste0("data/usgs_dailyQ_", .x,".rds"))
+# )
+
+```
+
+```{r data_rebuild_bfs, eval=FALSE}
+# #add new USGS baseflow predictions...
+# huc4 <- c("1710","1711")
+# url <- paste0("https://wa.water.usgs.gov/projects/baseflows/out/bfprj_HUC",huc4,".csv")
+# usgs_bfs <- map_df(url, ~readr::read_csv(.x)) |> 
+#   filter(SiteID %in% sites$site_no) |> 
+#   mutate(yday = yday(Date)) |> 
+#   select(
+#     site_no = SiteID, date = Date, yday,
+#     q_bfs_pred = Baseflow.cfs,
+#     q_bfs_pred05 = StreamflowCB05.cfs, 
+#     q_bfs_pred95 = StreamflowCB95.cfs
+#     ) |> 
+#     saveRDS(paste0("data/usgs_bfs_pred.rds"))
+#   
+```
+
+```{r data_rebuild_st_pred, eval=FALSE}
+#could also think about adding/integrating NWM via AWS flow_trees_apps.qmd>>nwm_zarr_pull2 
+
+# # #need to know gage HUC10 to figure out model prediction file; h10 lu not yet scripted, quick manual via
+# # https://geo.wa.gov/datasets/waecy::national-watershed-boundary-dataset-wbd-hydrologic-unit-code-10-digit-basins-of-washington-state/explore?layer=11
+# # # then need to know gage COMID since values are by COMID-day
+# # # but gage may or may not actually be in the dataset for ... reasons?
+# sites$COMID <- map_int(
+#   sites$site_no,
+#   ~nhdplusTools::discover_nhdplus_id(
+#     nldi_feature = list(featureSource = "nwissite",
+#                         featureID = paste0("USGS-",.x))) 
+# )
+# #note single HUC10 is n-COMIDs by n-days in 1990-2021
+# sites$huc10 <- c(
+#   1710010605, #naselle
+#   1710010603 #willapa
+#   )
+# 
+# stp <- map_df(
+#   sites$huc10,
+#   ~read_csv(paste0("~/T/DFW-Team WDFW Watershed Synthesis - data_common/st_pred/st_pred_171001/st_pred_",.x,".csv")) |> 
+#   select(date = tim.date, COMID, st_pred = prd.stream_temp)
+#   ) |> 
+#   drop_na(st_pred)
+# distinct(stp, COMID) |> semi_join(sites, by = "COMID")
+# 
+# # #do not want HUC10 'average' steam temp across COMIDs
+# # #but could also take max daily pred across spatial range
+# # #would be better to add HUC10 stratification, mutate in col in map_df
+# # stp |> 
+# #   group_by(date) |> 
+# #   summarise(st_pred_max = max(st_pred, na.rm = T))
+# 
+# left_join(
+#   as_tibble(sites), stp, by = "COMID"
+# ) |> 
+#   saveRDS("data/nwfsc_st_pred.rds")
+
+```
+
+
