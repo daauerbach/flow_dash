@@ -70,13 +70,12 @@ nwfsc_st <- readRDS("data/nwfsc_st_pred.rds") |>
     year = as.character(year(date)), month = month(date), yday = yday(date)
   )
 
-#use rangeslider()?
-#add_image?
+rr_wb_coho <- readRDS("data/rr_wb_coho.rds")
 
-makeplotly <- function(type, site, log10 = F){
 
-  d <- usgs_q_dv |> filter(site_no==site) |> select(year, yday, {{ type }})
-  vals <- d |> pull({{type}})
+plot_q_dv <- function(site, log10 = T){
+
+  d <- usgs_q_dv |> filter(site_no==site) |> select(year, yday, q_dv_mean)
 
   p <- plotly::plot_ly(d) |>
     plotly::layout(
@@ -86,8 +85,8 @@ makeplotly <- function(type, site, log10 = F){
 
   for(i in unique(d$year)){
     p <- plotly::add_lines(
-      p, name = i, x = ~yday, y = ~y,
-      data = filter(d, year == i) |> rename(y = {{type}})
+      p, name = i, x = ~yday, y = ~q_dv_mean,
+      data = filter(d, year == i)
     )
   }
 
@@ -111,6 +110,113 @@ makeplotly <- function(type, site, log10 = F){
 
   p
 }
+
+plot_qmin <- function(site){
+  usgs_q_dv |> 
+    filter(site_no == site, year != "2024") |>
+    slice_min(order_by = q_dv_mean, n = 1, by = year, with_ties = F) |>
+    mutate(month = if_else(is.na(month), "med", month.abb[month]) |> 
+             factor(levels = c(month.abb[6:10], "med"))) |> 
+    select(year, month, min_cfs = q_dv_mean) |> 
+    plotly::plot_ly(type = "bar", x = ~year, y = ~min_cfs, color = ~month) |> 
+    plotly::rangeslider() |> 
+    plotly::layout(
+      legend = list(title='month'),
+      xaxis = list(title='')
+    )  
+}
+
+plot_tmax <- function(site){
+  nwfsc_st |> 
+    filter(site_no == site) |> 
+    slice_max(order_by = st_pred, n = 1, by = year, with_ties = F) |>
+    mutate(month = if_else(is.na(month), "med", month.abb[month]) |> 
+             factor(levels = c(month.abb[6:10], "med"))) |> 
+    select(year, month, max_degC = st_pred) |> 
+    plotly::plot_ly( type = "bar", x = ~year, y = ~max_degC, color = ~month) |> 
+    plotly::rangeslider() |> 
+    plotly::layout(
+      legend = list(title='month'),
+      xaxis = list(title='')
+    )  
+}
+
+plot_rr_ts <- function(site){
+  rr_wb_coho |> 
+    filter(site_no == site) |> 
+    plotly::plot_ly(
+      type = "scatter", mode = "lines+markers",
+      x = ~year, y = ~val, color = ~var
+      ) |> 
+#    plotly::rangeslider() |> 
+    plotly::layout(
+      legend = list(title=''),
+      xaxis = list(title=''),
+      yaxis = list(title='')
+    ) 
+}
+
+#this grabbing flow on warmest day
+#could should streamtemp on day of lowest flow?
+plot_t_vs_q <- function(site){
+  d <- left_join(
+    nwfsc_st |> 
+      filter(site_no == site) |> 
+      slice_max(order_by = st_pred, n = 1, by = year, with_ties = F)
+    , 
+    usgs_q_dv
+    ,
+    by = c("site_no","station_nm","date","year","month","yday")    
+  ) |>
+    inner_join(
+      rr_wb_coho |>
+        filter(site_no == site 
+               #,var == "fspt" 
+               #,var %in% c("escp","fspt")
+               ) |>
+        mutate(year = as.character(year))
+      , by = c("site_no", "year")
+    ) |> 
+    mutate(
+      across(where(is.numeric), ~round(., digits = 1))
+    )
+  
+  d |>
+    plotly::plot_ly(
+      type = "scatter", mode = "markers"
+      ) |> 
+    plotly::add_markers(
+      x = ~q_dv_mean, y = ~st_pred,
+      name = ~var, size = ~val, 
+      marker = list(sizeref = 0.1),
+      text = ~paste(
+        '</br> Year: ', year,
+        '</br> cfs: ', q_dv_mean,
+        '</br> degC: ', st_pred,
+        '</br> count: ', val
+        )
+      ) |> 
+    plotly::layout(
+      xaxis = list(title='cfs of obs Q on day of max pred. T'),
+      yaxis = list(title='degC max pred. T')
+    ) 
+  
+  # p <- map(
+  #   c("escp","fspt"),
+  #   function(v) {
+  #     plotly::plot_ly(
+  #       data = filter(d, var == v),
+  #       x = ~q_dv_mean, y = ~st_pred, 
+  #       name = v,
+  #       size = ~val, text = ~year, 
+  #       marker = list(sizeref = 0.1)
+  #     ) #|> plotly::add_markers(name = v)
+  #   })
+  # 
+  # plotly::subplot(p, nrows = 2)
+
+}
+#plot_t_vs_q(sites$site_no[1])
 
 ```
 
@@ -190,100 +296,155 @@ makeplotly <- function(type, site, log10 = F){
 
 ```
 
+```{r data_rebuild_rr, eval=FALSE}
+#check in with Evan and Colt about compiled estimates from CreelAnalysis, but not in Willapa
+#first part is currently unused read from CRC mdb, which has both Chin and coho but only FW & M spt
+#second currently used is from coho RR maintained by BM, compiles comm catch and escapement (reapportioned to river)
+
+# mdb_file_path <- "~/T/DFW-Team WDFW Watershed Synthesis - data_common/crc/Sport Harvest Estimates 20230213.mdb"
+# 
+# crc <- inner_join(
+#   readr::read_csv(I(
+#     system2(
+#       "mdb-export",
+#       args = paste(str_replace_all(mdb_file_path, " ", "\\\\ "),"Area"),
+#       stdout = T) 
+#   ))
+#   ,
+#   readr::read_csv(I(
+#     system2(
+#       "mdb-export",
+#       args = paste(str_replace_all(mdb_file_path, " ", "\\\\ "),"Catch"),
+#       stdout = T) 
+#   ))
+#   ,  by = "AreaID"
+# ) |> 
+#   select(
+#     AreaCode, AreaName, AreaType, AreaWRIA,
+#     CatchYear, CatchStatMonth, Species, CatchEst #, CatchVariance?
+#   ) |> 
+#   rename_with(~tolower(.) |> str_remove("catch")) |> 
+#   filter(
+#     #year >= 2000,
+#     species %in% c("Coho","Chinook")
+#   )
+# 
+# crc |> 
+#   #filter(str_detect(areaname, "illap|aselle")) |> count(areacode, areaname)
+#   filter(
+#     areacode %in% c("21","375","424"),
+#     between(statmonth, 6, 10),
+#     !(areacode == "21" & year == 1992) #duplication, 
+#     ) |> 
+#   #  pivot_wider(names_from = species, values_from = est)
+#   ggplot() + geom_col(aes(year, est, fill = statmonth)) + 
+#   facet_wrap(~areaname + species, ncol = 3, dir = "v")
+
+
+#Only have coho RR on hand
+f<-"../2024 WB4 Coho Run Reconstruction Model Draft 02.01.2024.xlsx"
+# #Marine sport 2.1 is split between pre-2010 in colAY and 2010onward in colP row 73 down
+# bind_cols(
+#   readxl::read_excel(f, range = "Catch!A9:A52", col_names = "year", col_types = "numeric"),
+#   readxl::read_excel(f, range = "Catch!K9:K52", col_names = "naselle_r", col_types = "numeric", na = "Total"),
+#   readxl::read_excel(f, range = "Catch!AJ9:AJ52", col_names = "willapa_r", col_types = "numeric", na = "Total")
+# ) |> 
+#   drop_na(year)
+
+rr_wb_coho <- bind_cols(
+  readxl::read_excel(f, range = "System Escapements!Q45:Q72", col_names = "year", col_types = "numeric"),
+
+  readxl::read_excel(f, range = "System Escapements!AC80:AC107", col_names = "naselle_escp", col_types = "numeric"),
+  readxl::read_excel(f, range = "System Escapements!AF80:AF107", col_names = "naselle_fspt", col_types = "numeric"),
+  readxl::read_excel(f, range = "System Escapements!AI80:AI107", col_names = "naselle_mspt", col_types = "numeric"),
+  readxl::read_excel(f, range = "System Escapements!AL80:AL107", col_names = "naselle_comm", col_types = "numeric")
+  ,
+  readxl::read_excel(f, range = "System Escapements!X45:X72", col_names = "willapa_escp", col_types = "numeric"),
+  readxl::read_excel(f, range = "System Escapements!AA45:AA72", col_names = "willapa_fspt", col_types = "numeric"),
+  readxl::read_excel(f, range = "System Escapements!AD45:AD72", col_names = "willapa_mspt", col_types = "numeric"),
+  readxl::read_excel(f, range = "System Escapements!AG45:AG72", col_names = "willapa_comm", col_types = "numeric")
+)
+
+#the LU to site could use something more generic...
+rr_wb_coho |>
+  pivot_longer(-year, values_to = "val") |> 
+  separate(name, into = c("river","var")) |> 
+  mutate(
+    site_no = if_else(str_detect(river, "aselle"), "12010000", "12013500")
+    ) |> 
+  saveRDS("data/rr_wb_coho.rds")
+
+```
+
+
 # `r unite(sites,"no_nm")$no_nm[1]`
 
-## Column {width = 60%}
+## Column
+
+### Row 
+
+```{r}
+#| title: Mean daily Q
+plot_q_dv(site = sites$site_no[1], log10 = T)
+```
+
+### Row
 
 ```{r}
 #| title: Annual min Obs mean daily Q
-usgs_q_dv |> 
-  filter(site_no == sites$site_no[1], 
-         year != "2024"
-         ) |>
-  slice_min(order_by = q_dv_mean, n = 1, by = year, with_ties = F) |>
-  mutate(month = if_else(is.na(month), "med", month.abb[month]) |> 
-           factor(levels = c(month.abb[6:10], "med"))) |> 
-  select(year, month, min_cfs = q_dv_mean) |> 
-  plotly::plot_ly( type = "bar", x = ~year, y = ~min_cfs, color = ~month) |> 
-  plotly::rangeslider() |> 
-  plotly::layout(
-    #plot_bgcolor = "#c2dffc",
-    legend = list(title='month'),
-    xaxis = list(title='')
-  )
+plot_qmin(sites$site_no[1])
 ```
 
 ```{r}
 #| title: Annual max Pred daily T
-
-nwfsc_st |> 
-  filter(site_no == sites$site_no[1]) |> 
-  slice_max(order_by = st_pred, n = 1, by = year, with_ties = F) |>
-  mutate(month = if_else(is.na(month), "med", month.abb[month]) |> 
-           factor(levels = c(month.abb[6:10], "med"))) |> 
-  select(year, month, max_degC = st_pred) |> 
-  plotly::plot_ly( type = "bar", x = ~year, y = ~max_degC, color = ~month) |> 
-  plotly::rangeslider() |> 
-  plotly::layout(
-    #plot_bgcolor = "#f2f5c6",
-    legend = list(title='month'),
-    xaxis = list(title='')
-  )
+plot_tmax(sites$site_no[1])
 ```
 
 ## Column
 
 ```{r}
-#| title: Mean daily Q
-makeplotly(type = "q_dv_mean", site = sites$site_no[1], log10 = T)
+#| title: Harvest + Escapement
+plot_rr_ts(sites$site_no[1])
+```
+
+```{r}
+#| title: Pred. degC vs obs cfs on day of max T
+plot_t_vs_q(sites$site_no[1])
 ```
 
 
 # `r unite(sites,"no_nm")$no_nm[2]`
 
-## Column {width = 60%}
+## Column
+
+### Row
+
+```{r}
+#| title: Mean daily Q
+plot_q_dv(site = sites$site_no[2], log10 = T)
+```
+
+### Row
 
 ```{r}
 #| title: Annual min Obs mean daily Q
-usgs_q_dv |> 
-  filter(site_no == sites$site_no[2], 
-         year != "2024"
-         ) |>
-  slice_min(order_by = q_dv_mean, n = 1, by = year, with_ties = F) |>
-  mutate(month = if_else(is.na(month), "med", month.abb[month]) |> 
-           factor(levels = c(month.abb[6:10], "med"))) |> 
-  select(year, month, min_cfs = q_dv_mean) |> 
-  plotly::plot_ly( type = "bar", x = ~year, y = ~min_cfs, color = ~month) |> 
-  plotly::rangeslider() |> 
-  plotly::layout(
-    #plot_bgcolor = "#c2dffc",
-    legend = list(title='month'),
-    xaxis = list(title='')
-  )
+plot_qmin(sites$site_no[2])
 ```
 
 ```{r}
 #| title: Annual max Pred daily T
-
-nwfsc_st |> 
-  filter(site_no == sites$site_no[2]) |> 
-  slice_max(order_by = st_pred, n = 1, by = year, with_ties = F) |>
-  mutate(month = if_else(is.na(month), "med", month.abb[month]) |> 
-           factor(levels = c(month.abb[6:10], "med"))) |> 
-  select(year, month, max_degC = st_pred) |> 
-  plotly::plot_ly( type = "bar", x = ~year, y = ~max_degC, color = ~month) |> 
-  plotly::rangeslider() |> 
-  plotly::layout(
-    #plot_bgcolor = "#f2f5c6",
-    legend = list(title='month'),
-    xaxis = list(title='')
-  )
+plot_tmax(sites$site_no[2])
 ```
 
 ## Column
 
 ```{r}
-#| title: Mean daily Q
-makeplotly(type = "q_dv_mean", site = sites$site_no[2], log10 = T)
+#| title: Harvest + Escapement
+plot_rr_ts(sites$site_no[2])
+```
+
+```{r}
+#| title: Pred. degC vs obs cfs on day of max T
+plot_t_vs_q(sites$site_no[2])
 ```
 
