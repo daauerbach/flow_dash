@@ -6,7 +6,6 @@ format:
     orientation: columns
 theme: lux
 embed-resources: true
-
 ---
 
 ```{r setup, include=FALSE, warning=FALSE, message=FALSE}
@@ -26,6 +25,13 @@ sites <- data.frame(
 )
   
 q_obs_range <- c(as.Date("1979-01-01"), Sys.Date())
+
+
+# # for ongoing dependent data (q_dv and bfs), could/should update relative to render date
+# # possibly modifying 'rebuild' chunks to store as other than rds (csv or sqlite)?
+# Sys.Date() - list.files("data", pattern = "usgs_dailyQ", full.names = T) |> 
+#   file.info() |> mutate(d = date(mtime)) |> pull(d)
+
 
 #build uniform object inserting NAs for missing obs during q_obs_range
 #rebuild/overwrite y, m, and yday since `complete` inserts many NAs
@@ -72,44 +78,67 @@ nwfsc_st <- readRDS("data/nwfsc_st_pred.rds") |>
 
 rr_wb_coho <- readRDS("data/rr_wb_coho.rds")
 
+rangeslider_thickness <- 0.05
+#wacolors::pal_vector("ferries",n=46)
+pal <- set_names(
+  c("#241E33", "#24213E", "#222548", "#1F2A52", "#18305A",
+    "#0F3661", "#043C66", "#00426B", "#00496F", "#004F72",
+    "#005473", "#015A73", "#005F72", "#006371", "#006871",
+    "#016C72", "#007172", "#007673", "#007A73", "#007F73",
+    "#0D8474", "#1E8974", "#2D8D74", "#3A9275", "#459676",
+    "#4F9A77", "#599F78", "#63A37A", "#6DA77B", "#77AB7E",
+    "#81AF80", "#8BB283", "#95B687", "#9EBA8B", "#A7BE8F",
+    "#B0C292", "#B8C693", "#C0CB92", "#C9CF90", "#D3D38D",
+    "#DED78A", "#EADB86", "#F3DE81", "#FBE17B", "#FFE474",
+    "#FFE56C", 
+    "#B96000", #"#483778"
+    "#DF3383", #"#000000FF",
+    "#8A6172", "#8A6172"
+    ),
+  c(2024:1979, 'median', 'q_bfs_pred','q_bfs_pred05','q_bfs_pred95'))
 
 plot_q_dv <- function(site, log10 = T){
 
-  d <- usgs_q_dv |> filter(site_no==site) |> select(year, yday, q_dv_mean)
-
-  p <- plotly::plot_ly(d) |>
-    plotly::layout(
-      xaxis = list(title='Day of year'),
-      yaxis = list(title='cfs')
-    )
-
-  for(i in unique(d$year)){
-    p <- plotly::add_lines(
-      p, name = i, x = ~yday, y = ~q_dv_mean,
-      data = filter(d, year == i)
-    )
-  }
-
+  d <- usgs_q_dv |>
+      filter(site_no==site) |>
+      select(year, yday, q_dv_mean)
+  
   if(site %in% unique(usgs_bfs$site_no)){
-    p <- plotly::add_ribbons(
-      p, name = "BFS_predCI", x = ~yday,
-      ymin = ~q_bfs_pred05, ymax = ~q_bfs_pred95,
-      line = list(dash = "dash", color = "#505050FF", alpha = 0.2),
-      data = filter(usgs_bfs, site_no == site)
-    )
-    p <- plotly::add_lines(
-      p, name = "BFS_pred", x = ~yday, y = ~q_bfs_pred,
-      line = list(dash = "dash", color = "#000000FF"),
-      data = filter(usgs_bfs, site_no == site)
-    )
+    d <- bind_rows(
+      d,
+      usgs_bfs |> 
+        filter(site_no == site) |> 
+        select(yday, starts_with("q_bfs")) |> 
+        pivot_longer(cols = starts_with("q_bfs"), 
+                     names_to = 'year',
+                     values_to = 'q_dv_mean'
+        )
+      )
   }
+  
+  p <- d |> 
+    plotly::plot_ly(
+      type = 'scatter', mode = 'lines',
+      name = ~year, x = ~yday, y = ~q_dv_mean,
+      color = ~year, colors = pal
+    ) |>
+    plotly::layout(
+      legend = list(traceorder = 'reversed'),
+      xaxis = list(
+        title = 'Day of year', 
+        ticktext = format(seq.Date(as.Date("2024-01-01"),as.Date("2024-12-01"), by = 'month'),  format = '%b-%d'),
+        tickvals = yday(seq.Date(as.Date("2024-01-01"),as.Date("2024-12-01"), by = 'month'))
+        ),
+      yaxis = list(title = 'cfs')
+    )
 
   if (log10){
     p <- p |> plotly::layout(yaxis = list(type = "log"))
-    }
+  }
 
   p
 }
+#plot_q_dv(sites$site_no[1])
 
 plot_qmin <- function(site){
   usgs_q_dv |> 
@@ -119,12 +148,37 @@ plot_qmin <- function(site){
              factor(levels = c(month.abb[6:10], "med"))) |> 
     select(year, month, min_cfs = q_dv_mean) |> 
     plotly::plot_ly(type = "bar", x = ~year, y = ~min_cfs, color = ~month) |> 
-    plotly::rangeslider() |> 
+    plotly::rangeslider(thickness = rangeslider_thickness) |> 
     plotly::layout(
       legend = list(title='month'),
       xaxis = list(title='')
     )  
 }
+
+plot_qquant <- function(site){
+  usgs_q_dv |> 
+    filter(site_no == site, year != "2024") |>
+    group_by(year) |> 
+    summarise(
+      q10 = quantile(q_dv_mean, p = 0.10),
+      q05 = quantile(q_dv_mean, p = 0.05),
+      q01 = quantile(q_dv_mean, p = 0.01),
+      .groups = "drop") |>
+    select(year, starts_with("q")) |>
+    pivot_longer(-year, names_to = "quantile", values_to = "cfs") |>
+    plotly::plot_ly(
+      type = "bar", x = ~year, y = ~cfs,
+      color = ~quantile, 
+      colors = c(q10 = "darkblue",
+                 q05 = "blue",
+                 q01 = "lightblue"
+                 )) |>
+    plotly::rangeslider(thickness = rangeslider_thickness) |>
+    plotly::layout(
+      #barmode = 'overlay',
+      xaxis = list(title='')
+    )
+} 
 
 plot_tmax <- function(site){
   nwfsc_st |> 
@@ -134,12 +188,35 @@ plot_tmax <- function(site){
              factor(levels = c(month.abb[6:10], "med"))) |> 
     select(year, month, max_degC = st_pred) |> 
     plotly::plot_ly( type = "bar", x = ~year, y = ~max_degC, color = ~month) |> 
-    plotly::rangeslider() |> 
+    plotly::rangeslider(thickness = rangeslider_thickness) |> 
     plotly::layout(
       legend = list(title='month'),
       xaxis = list(title='')
     )  
 }
+
+plot_tover <- function(site){
+  #degree thresholds are too hard-coded, but just to get started 
+  nwfsc_st |> 
+    filter(site_no == site) |> 
+    group_by(year) |> 
+    summarise(
+      days_over18 = sum(st_pred > 18),
+      days_over20 = sum(st_pred > 20),
+      .groups = "drop") |>
+    select(year, starts_with("days_over")) |>
+    pivot_longer(-year, names_to = "over", values_to = "days") |> 
+    plotly::plot_ly(
+      type = "bar", x = ~year, y = ~days, 
+      color = ~over, colors = c(days_over18 = "yellow", days_over20 = "orange")) |>
+    plotly::rangeslider(thickness = rangeslider_thickness) |>
+    plotly::layout(
+      xaxis = list(title='')
+    )
+} 
+
+
+#currently unused
 
 plot_rr_ts <- function(site){
   rr_wb_coho |> 
@@ -155,9 +232,7 @@ plot_rr_ts <- function(site){
       yaxis = list(title='')
     ) 
 }
-
-#this grabbing flow on warmest day
-#could should streamtemp on day of lowest flow?
+#using flow on warmest day; could should examine streamtemp on day of lowest flow?
 plot_t_vs_q <- function(site){
   d <- left_join(
     nwfsc_st |> 
@@ -216,7 +291,6 @@ plot_t_vs_q <- function(site){
   # plotly::subplot(p, nrows = 2)
 
 }
-#plot_t_vs_q(sites$site_no[1])
 
 ```
 
@@ -235,24 +309,23 @@ plot_t_vs_q <- function(site){
 #     select(site_no, date = Date, year, month, yday, q_dv_mean = X_00060_00003) |>
 #     saveRDS(paste0("data/usgs_dailyQ_", .x,".rds"))
 # )
-
 ```
 
 ```{r data_rebuild_bfs, eval=FALSE}
 # #add new USGS baseflow predictions...
 # huc4 <- c("1710","1711")
 # url <- paste0("https://wa.water.usgs.gov/projects/baseflows/out/bfprj_HUC",huc4,".csv")
-# usgs_bfs <- map_df(url, ~readr::read_csv(.x)) |> 
-#   filter(SiteID %in% sites$site_no) |> 
-#   mutate(yday = yday(Date)) |> 
+# usgs_bfs <- map_df(url, ~readr::read_csv(.x)) |>
+#   filter(SiteID %in% sites$site_no) |>
+#   mutate(yday = yday(Date)) |>
 #   select(
 #     site_no = SiteID, date = Date, yday,
 #     q_bfs_pred = Baseflow.cfs,
-#     q_bfs_pred05 = StreamflowCB05.cfs, 
+#     q_bfs_pred05 = StreamflowCB05.cfs,
 #     q_bfs_pred95 = StreamflowCB95.cfs
-#     ) |> 
+#     ) |>
 #     saveRDS(paste0("data/usgs_bfs_pred.rds"))
-#   
+
 ```
 
 ```{r data_rebuild_st_pred, eval=FALSE}
@@ -381,35 +454,35 @@ rr_wb_coho |>
 
 ## Column
 
-### Row 
-
-```{r}
-#| title: Mean daily Q
-plot_q_dv(site = sites$site_no[1], log10 = T)
-```
-
 ### Row
 
 ```{r}
-#| title: Annual min Obs mean daily Q
-plot_qmin(sites$site_no[1])
+#| title: Annual max Siegel et al. 2023 pred. daily stream temp
+plot_tmax(sites$site_no[1])
 ```
 
 ```{r}
-#| title: Annual max Pred daily T
-plot_tmax(sites$site_no[1])
+#| title: Annual min USGS obs mean daily Q
+plot_qmin(sites$site_no[1])
+```
+
+### Row 
+
+```{r}
+#| title: Annual days above degC
+plot_tover(sites$site_no[1])
+```
+
+```{r}
+#| title: Annual low flow quantiles - Q10, Q05, Q01
+plot_qquant(sites$site_no[1])
 ```
 
 ## Column
 
 ```{r}
-#| title: Harvest + Escapement
-plot_rr_ts(sites$site_no[1])
-```
-
-```{r}
-#| title: Pred. degC vs obs cfs on day of max T
-plot_t_vs_q(sites$site_no[1])
+#| title: Mean daily Q
+plot_q_dv(site = sites$site_no[1], log10 = T)
 ```
 
 
@@ -420,31 +493,30 @@ plot_t_vs_q(sites$site_no[1])
 ### Row
 
 ```{r}
-#| title: Mean daily Q
-plot_q_dv(site = sites$site_no[2], log10 = T)
+#| title: Annual max Siegel et al. 2023 pred. daily stream temp
+plot_tmax(sites$site_no[2])
 ```
 
-### Row
-
 ```{r}
-#| title: Annual min Obs mean daily Q
+#| title: Annual min USGS obs mean daily Q
 plot_qmin(sites$site_no[2])
 ```
 
+### Row 
+
 ```{r}
-#| title: Annual max Pred daily T
-plot_tmax(sites$site_no[2])
+#| title: Annual days above degC
+plot_tover(sites$site_no[2])
+```
+
+```{r}
+#| title: Annual low flow quantiles - Q10, Q05, Q01
+plot_qquant(sites$site_no[2])
 ```
 
 ## Column
 
 ```{r}
-#| title: Harvest + Escapement
-plot_rr_ts(sites$site_no[2])
+#| title: Mean daily Q
+plot_q_dv(site = sites$site_no[2], log10 = T)
 ```
-
-```{r}
-#| title: Pred. degC vs obs cfs on day of max T
-plot_t_vs_q(sites$site_no[2])
-```
-
