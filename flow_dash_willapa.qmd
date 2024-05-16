@@ -3,7 +3,7 @@ title: "FLOWdash Willapa"
 logo: assets/wdfw_logo_stacked_fullcolor.png
 format: 
   dashboard:
-    orientation: columns
+    orientation: rows
 theme: lux
 embed-resources: true
 ---
@@ -451,42 +451,9 @@ rr_wb_coho |>
 
 # About
 
-## Column
+## Row
 
-### Row
-
-::: {.card title="Annual max Siegel et al. 2023 pred. daily stream temp"}
-This card displays per-year maximum values of the [Siegel et al. 2023](https://journals.plos.org/water/article?id=10.1371/journal.pwat.0000119) estimated daily stream temperature for the medium resolution NHD+ COMID (flowline+local catchment) associated with the displayed USGS streamflow gage.
-
-Fitting to the NorWeST database, "This model reflects mechanistic processes using publicly available climate and landscape covariates in a Generalized Additive Model framework. We allowed covariates to interact while accounting for nonlinear relationships between temporal and spatial covariates to better capture seasonal patterns."
-
-Values displayed here are from the [publicly available datasets of results](https://zenodo.org/records/8174951).
-:::
-
-::: {.card title="Annual min USGS obs mean daily Q"}
-This card displays per-year minimum values of daily mean streamflow volume in cfs (cubic feet per second) as measured at the USGS gaging stations (`r paste(unlist(unite(sites, col = "nn", sep = " ")), collapse = " & ")`).
-
-[`r sites$site_no[1]`](`r paste0('https://waterdata.usgs.gov/monitoring-location/',sites$site_no[1],'/#parameterCode=00060&period=P365D&showMedian=true')`)
-
-[`r sites$site_no[2]`](`r paste0('https://waterdata.usgs.gov/monitoring-location/',sites$site_no[2],'/#parameterCode=00060&period=P365D&showMedian=true')`)
-
-:::
-
-### Row 
-
-::: {.card title="Annual days above degC"}
-Based on the same data as the annual maximum estimated stream temp displayed above, this card shows the number of days per year with values greater than 18 (yellow) and 20 (orange) degrees C.
-
-This tally is a simple index of relative differences through time, and is *not* equivalent to the 7-DADMax used for [WQS aquatic life temperature criteria](https://app.leg.wa.gov/WAC/default.aspx?cite=173-201A-200) and [303(d) assesments](https://ecology.wa.gov/Water-Shorelines/Water-quality/Water-improvement/Assessment-of-state-waters-303d) as [discoverable elsewhere](https://mywaterway.epa.gov/state/WA/advanced-search).
-:::
-
-::: {.card title="Annual low flow quantiles - Q10, Q05, Q01"}
-Based on the same data as the annual minimum, per-year sample quantiles of daily streamflow are shown to illustrate longer term relative differences in several magnitudes of 'low' flow. For example, the dark blue 'Q10' shown here represents the value at which ~90% of observed daily mean flows in a year were greater and ~10% were lower. 
-:::
-
-## Column {width=40%}
-
-::: {.card title="Mean daily Q"}
+::: {.card title="Daily mean Q + BFS forecast"}
 This card displays mean daily streamflow per-day-of-year overlaid by year, with the median per day across years for reference.
 
 In addition, the USGS WA Water Science Center has recently developed near-term [baseflow forecasts ](https://www.usgs.gov/tools/baseflow-forecasts-selected-sites-united-states), and the [current predictions](https://wa.water.usgs.gov/projects/baseflows/BFS_downloads_index.html) are shown with confidence intervals.
@@ -500,74 +467,103 @@ As for all other cards:
   - zoom to any area of interest.
 :::
 
+## Row
 
-# `r unite(sites,"no_nm")$no_nm[1]`
+::: {.card title="Annual min. daily mean Q"}
+This card displays per-year minimum values of daily mean streamflow volume in cfs (cubic feet per second) as measured at the USGS gaging stations (`r paste(unlist(unite(sites, col = "nn", sep = " ")), collapse = " & ")`).
 
-## Column
+[`r sites$site_no[1]`](`r paste0('https://waterdata.usgs.gov/monitoring-location/',sites$site_no[1],'/#parameterCode=00060&period=P365D&showMedian=true')`)
 
-### Row
+[`r sites$site_no[2]`](`r paste0('https://waterdata.usgs.gov/monitoring-location/',sites$site_no[2],'/#parameterCode=00060&period=P365D&showMedian=true')`)
 
-```{r}
-#| title: Annual max Siegel et al. 2023 pred. daily stream temp
-plot_tmax(sites$site_no[1])
+:::
+
+::: {.card title="Annual low flow quantiles - Q10, Q05, Q01"}
+Based on the same data as the annual minimum, per-year sample quantiles of daily streamflow are shown to illustrate longer term relative differences in several magnitudes of 'low' flow. For example, the dark blue 'Q10' shown here represents the value at which ~90% of observed daily mean flows in a year were greater and ~10% were lower. 
+:::
+
+::: {.card title="Annual max pred. daily stream temp, Siegel et al. 2023"}
+This card displays per-year maximum values of the [Siegel et al. 2023](https://journals.plos.org/water/article?id=10.1371/journal.pwat.0000119) estimated daily stream temperature for the medium resolution NHD+ COMID (flowline+local catchment) associated with the displayed USGS streamflow gage.
+
+Fitting to the NorWeST database, "This model reflects mechanistic processes using publicly available climate and landscape covariates in a Generalized Additive Model framework. We allowed covariates to interact while accounting for nonlinear relationships between temporal and spatial covariates to better capture seasonal patterns."
+
+Values displayed here are from the [publicly available datasets of results](https://zenodo.org/records/8174951).
+:::
+
+::: {.card title="Annual days above degC, Siegel et al. 2023"}
+Based on the same data as the annual maximum estimated stream temp displayed above, this card shows the number of days per year with values greater than 18 (yellow) and 20 (orange) degrees C.
+
+This tally is a simple index of relative differences through time, and is *not* equivalent to the 7-DADMax used for [WQS aquatic life temperature criteria](https://app.leg.wa.gov/WAC/default.aspx?cite=173-201A-200) and [303(d) assesments](https://ecology.wa.gov/Water-Shorelines/Water-quality/Water-improvement/Assessment-of-state-waters-303d) as [discoverable elsewhere](https://mywaterway.epa.gov/state/WA/advanced-search).
+:::
+
+
+```{r, include=FALSE}
+i <- 1
 ```
 
+# `r unite(sites,"no_nm")$no_nm[i]`
+
+## Row
+
 ```{r}
-#| title: Annual min USGS obs mean daily Q
-plot_qmin(sites$site_no[1])
+#| title: Daily mean Q + BFS forecast
+plot_q_dv(site = sites$site_no[i], log10 = T)
 ```
 
-### Row 
+## Row
 
 ```{r}
-#| title: Annual days above degC
-plot_tover(sites$site_no[1])
-```
-
-```{r}
-#| title: Annual low flow quantiles - Q10, Q05, Q01
-plot_qquant(sites$site_no[1])
-```
-
-## Column
-
-```{r}
-#| title: Mean daily Q
-plot_q_dv(site = sites$site_no[1], log10 = T)
-```
-
-
-# `r unite(sites,"no_nm")$no_nm[2]`
-
-## Column
-
-### Row
-
-```{r}
-#| title: Annual max Siegel et al. 2023 pred. daily stream temp
-plot_tmax(sites$site_no[2])
-```
-
-```{r}
-#| title: Annual min USGS obs mean daily Q
-plot_qmin(sites$site_no[2])
-```
-
-### Row 
-
-```{r}
-#| title: Annual days above degC
-plot_tover(sites$site_no[2])
+#| title: Annual min. daily mean Q
+plot_qmin(sites$site_no[i])
 ```
 
 ```{r}
 #| title: Annual low flow quantiles - Q10, Q05, Q01
-plot_qquant(sites$site_no[2])
+plot_qquant(sites$site_no[i])
 ```
 
-## Column
+```{r}
+#| title: Annual max pred. daily stream temp, Siegel et al. 2023
+plot_tmax(sites$site_no[i])
+```
 
 ```{r}
-#| title: Mean daily Q
-plot_q_dv(site = sites$site_no[2], log10 = T)
+#| title: Annual days above degC, Siegel et al. 2023
+plot_tover(sites$site_no[i])
+```
+
+
+```{r, include=FALSE}
+i <- 2
+```
+
+# `r unite(sites,"no_nm")$no_nm[i]`
+
+## Row
+
+```{r}
+#| title: Daily mean Q + BFS forecast
+plot_q_dv(site = sites$site_no[i], log10 = T)
+```
+
+## Row
+
+```{r}
+#| title: Annual min. daily mean Q
+plot_qmin(sites$site_no[i])
+```
+
+```{r}
+#| title: Annual low flow quantiles - Q10, Q05, Q01
+plot_qquant(sites$site_no[i])
+```
+
+```{r}
+#| title: Annual max pred. daily stream temp, Siegel et al. 2023
+plot_tmax(sites$site_no[i])
+```
+
+```{r}
+#| title: Annual days above degC, Siegel et al. 2023
+plot_tover(sites$site_no[i])
 ```
