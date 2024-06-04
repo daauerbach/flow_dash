@@ -1,5 +1,5 @@
 ---
-title: "FLOWdash Willapa"
+title: "FLOWdash N Coast"
 logo: assets/wdfw_logo_stacked_fullcolor.png
 format: 
   dashboard:
@@ -15,13 +15,18 @@ library("tidyverse", quietly = T)
 theme_set(theme_minimal()) 
 
 # #workbook of basic site/station metadata: `usgs_sites`
-# readxl::read_excel("~/T/DFW-Team WDFW Watershed Synthesis - flow_trees_heat/usgs_sites_dailyQ_focal.xlsx") |> 
-#   select(site_no, station_nm) |> 
-#   mutate(station_nm = str_remove(station_nm, ", WA$") |> str_replace("RIVER", "R") |> str_to_title()) 
+# readxl::read_excel("~/T/DFW-Team WDFW Watershed Synthesis - flow_trees_heat/usgs_sites_dailyQ_focal.xlsx") |>
+#   select(site_no, station_nm) |>
+#   mutate(station_nm = str_remove(station_nm, ", WA$") |> 
+#            str_replace("RIVER", "R") |> 
+#            str_replace("NEAR", "Nr") |> 
+#            str_replace("HIGHWAY", "HWY") |> 
+#            str_to_title()) |>
+#   slice(19:16) |> unlist()
 
 sites <- data.frame(
-  site_no = c("12010000","12013500"),
-  station_nm = c("Naselle R Near Naselle", "Willapa R Near Willapa")
+  site_no = c("12043000","12041200","12040500","12039500"),
+  station_nm = c("Calawah R Nr Forks","Hoh R At Us Hwy 101 Nr Forks","Queets R Nr Clearwater","Quinault R At Quinault Lake")
 )
   
 q_obs_range <- c(as.Date("1979-01-01"), Sys.Date())
@@ -78,7 +83,6 @@ nwfsc_st <- list.files("data", pattern = paste0("nwfsc_st_pred_", sites$site_no,
     year = as.character(year(date)), month = month(date), yday = yday(date)
   )
 
-rr_wb_coho <- readRDS("data/rr_wb_coho.rds")
 
 rangeslider_thickness <- 0.05
 #wacolors::pal_vector("ferries",n=46)
@@ -217,83 +221,6 @@ plot_tover <- function(site){
     )
 } 
 
-
-#currently unused
-
-plot_rr_ts <- function(site){
-  rr_wb_coho |> 
-    filter(site_no == site) |> 
-    plotly::plot_ly(
-      type = "scatter", mode = "lines+markers",
-      x = ~year, y = ~val, color = ~var
-      ) |> 
-#    plotly::rangeslider() |> 
-    plotly::layout(
-      legend = list(title=''),
-      xaxis = list(title=''),
-      yaxis = list(title='')
-    ) 
-}
-#using flow on warmest day; could should examine streamtemp on day of lowest flow?
-plot_t_vs_q <- function(site){
-  d <- left_join(
-    nwfsc_st |> 
-      filter(site_no == site) |> 
-      slice_max(order_by = st_pred, n = 1, by = year, with_ties = F)
-    , 
-    usgs_q_dv
-    ,
-    by = c("site_no","station_nm","date","year","month","yday")    
-  ) |>
-    inner_join(
-      rr_wb_coho |>
-        filter(site_no == site 
-               #,var == "fspt" 
-               #,var %in% c("escp","fspt")
-               ) |>
-        mutate(year = as.character(year))
-      , by = c("site_no", "year")
-    ) |> 
-    mutate(
-      across(where(is.numeric), ~round(., digits = 1))
-    )
-  
-  d |>
-    plotly::plot_ly(
-      type = "scatter", mode = "markers"
-      ) |> 
-    plotly::add_markers(
-      x = ~q_dv_mean, y = ~st_pred,
-      name = ~var, size = ~val, 
-      marker = list(sizeref = 0.1),
-      text = ~paste(
-        '</br> Year: ', year,
-        '</br> cfs: ', q_dv_mean,
-        '</br> degC: ', st_pred,
-        '</br> count: ', val
-        )
-      ) |> 
-    plotly::layout(
-      xaxis = list(title='cfs of obs Q on day of max pred. T'),
-      yaxis = list(title='degC max pred. T')
-    ) 
-  
-  # p <- map(
-  #   c("escp","fspt"),
-  #   function(v) {
-  #     plotly::plot_ly(
-  #       data = filter(d, var == v),
-  #       x = ~q_dv_mean, y = ~st_pred, 
-  #       name = v,
-  #       size = ~val, text = ~year, 
-  #       marker = list(sizeref = 0.1)
-  #     ) #|> plotly::add_markers(name = v)
-  #   })
-  # 
-  # plotly::subplot(p, nrows = 2)
-
-}
-
 ```
 
 ```{r data_rebuild_q_dv, eval=FALSE}
@@ -371,7 +298,7 @@ stp <- map_df(
   ) |>
   drop_na(st_pred)
 
-# both Willapa gages
+# 3 of 4 for N Coast gages
 distinct(stp, COMID) |> 
   inner_join(sites, by = "COMID") |> 
   split(~site_no) |> 
@@ -383,85 +310,12 @@ distinct(stp, COMID) |>
       saveRDS(paste0("data/nwfsc_st_pred_",.x$site_no,".rds"))
   )
 
-```
-
-```{r data_rebuild_rr, eval=FALSE}
-#check in with Evan and Colt about compiled estimates from CreelAnalysis, but not in Willapa
-#first part is currently unused read from CRC mdb, which has both Chin and coho but only FW & M spt
-#second currently used is from coho RR maintained by BM, compiles comm catch and escapement (reapportioned to river)
-
-# mdb_file_path <- "~/T/DFW-Team WDFW Watershed Synthesis - data_common/crc/Sport Harvest Estimates 20230213.mdb"
-# 
-# crc <- inner_join(
-#   readr::read_csv(I(
-#     system2(
-#       "mdb-export",
-#       args = paste(str_replace_all(mdb_file_path, " ", "\\\\ "),"Area"),
-#       stdout = T) 
-#   ))
-#   ,
-#   readr::read_csv(I(
-#     system2(
-#       "mdb-export",
-#       args = paste(str_replace_all(mdb_file_path, " ", "\\\\ "),"Catch"),
-#       stdout = T) 
-#   ))
-#   ,  by = "AreaID"
-# ) |> 
-#   select(
-#     AreaCode, AreaName, AreaType, AreaWRIA,
-#     CatchYear, CatchStatMonth, Species, CatchEst #, CatchVariance?
-#   ) |> 
-#   rename_with(~tolower(.) |> str_remove("catch")) |> 
-#   filter(
-#     #year >= 2000,
-#     species %in% c("Coho","Chinook")
-#   )
-# 
-# crc |> 
-#   #filter(str_detect(areaname, "illap|aselle")) |> count(areacode, areaname)
-#   filter(
-#     areacode %in% c("21","375","424"),
-#     between(statmonth, 6, 10),
-#     !(areacode == "21" & year == 1992) #duplication, 
-#     ) |> 
-#   #  pivot_wider(names_from = species, values_from = est)
-#   ggplot() + geom_col(aes(year, est, fill = statmonth)) + 
-#   facet_wrap(~areaname + species, ncol = 3, dir = "v")
-
-
-#Only have coho RR on hand
-f<-"../2024 WB4 Coho Run Reconstruction Model Draft 02.01.2024.xlsx"
-# #Marine sport 2.1 is split between pre-2010 in colAY and 2010onward in colP row 73 down
-# bind_cols(
-#   readxl::read_excel(f, range = "Catch!A9:A52", col_names = "year", col_types = "numeric"),
-#   readxl::read_excel(f, range = "Catch!K9:K52", col_names = "naselle_r", col_types = "numeric", na = "Total"),
-#   readxl::read_excel(f, range = "Catch!AJ9:AJ52", col_names = "willapa_r", col_types = "numeric", na = "Total")
-# ) |> 
-#   drop_na(year)
-
-rr_wb_coho <- bind_cols(
-  readxl::read_excel(f, range = "System Escapements!Q45:Q72", col_names = "year", col_types = "numeric"),
-
-  readxl::read_excel(f, range = "System Escapements!AC80:AC107", col_names = "naselle_escp", col_types = "numeric"),
-  readxl::read_excel(f, range = "System Escapements!AF80:AF107", col_names = "naselle_fspt", col_types = "numeric"),
-  readxl::read_excel(f, range = "System Escapements!AI80:AI107", col_names = "naselle_mspt", col_types = "numeric"),
-  readxl::read_excel(f, range = "System Escapements!AL80:AL107", col_names = "naselle_comm", col_types = "numeric")
-  ,
-  readxl::read_excel(f, range = "System Escapements!X45:X72", col_names = "willapa_escp", col_types = "numeric"),
-  readxl::read_excel(f, range = "System Escapements!AA45:AA72", col_names = "willapa_fspt", col_types = "numeric"),
-  readxl::read_excel(f, range = "System Escapements!AD45:AD72", col_names = "willapa_mspt", col_types = "numeric"),
-  readxl::read_excel(f, range = "System Escapements!AG45:AG72", col_names = "willapa_comm", col_types = "numeric")
-)
-
-#the LU to site could use something more generic...
-rr_wb_coho |>
-  pivot_longer(-year, values_to = "val") |> 
-  separate(name, into = c("river","var")) |> 
-  mutate(
-    site_no = if_else(str_detect(river, "aselle"), "12010000", "12013500")
-    ) |> 
-  saveRDS("data/rr_wb_coho.rds")
+# #do not want HUC10 'average' steam temp across COMIDs
+# #but could also take max daily pred across spatial range
+# #would be better to add HUC10 stratification, mutate in col in map_df
+# stp |>
+#   group_by(date) |>
+#   summarise(st_pred_max = max(st_pred, na.rm = T))
 
 ```
 
@@ -551,6 +405,78 @@ plot_tover(sites$site_no[i])
 
 ```{r, include=FALSE}
 i <- 2
+```
+
+# `r unite(sites,"no_nm")$no_nm[i]`
+
+## Row
+
+```{r}
+#| title: Daily mean Q + BFS forecast
+plot_q_dv(site = sites$site_no[i], log10 = T)
+```
+
+## Row
+
+```{r}
+#| title: Annual min. daily mean Q
+plot_qmin(sites$site_no[i])
+```
+
+```{r}
+#| title: Annual low flow quantiles - Q10, Q05, Q01
+plot_qquant(sites$site_no[i])
+```
+
+```{r}
+#| title: Annual max pred. daily stream temp, Siegel et al. 2023
+plot_tmax(sites$site_no[i])
+```
+
+```{r}
+#| title: Annual days above degC, Siegel et al. 2023
+plot_tover(sites$site_no[i])
+```
+
+
+```{r, include=FALSE}
+i <- 3
+```
+
+# `r unite(sites,"no_nm")$no_nm[i]`
+
+## Row
+
+```{r}
+#| title: Daily mean Q + BFS forecast
+plot_q_dv(site = sites$site_no[i], log10 = T)
+```
+
+## Row
+
+```{r}
+#| title: Annual min. daily mean Q
+plot_qmin(sites$site_no[i])
+```
+
+```{r}
+#| title: Annual low flow quantiles - Q10, Q05, Q01
+plot_qquant(sites$site_no[i])
+```
+
+```{r}
+#| title: Annual max pred. daily stream temp, Siegel et al. 2023
+plot_tmax(sites$site_no[i])
+```
+
+```{r}
+#| title: Annual days above degC, Siegel et al. 2023
+plot_tover(sites$site_no[i])
+```
+
+
+```{r, include=FALSE}
+i <- 4
 ```
 
 # `r unite(sites,"no_nm")$no_nm[i]`
