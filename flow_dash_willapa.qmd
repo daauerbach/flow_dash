@@ -78,21 +78,35 @@ nwfsc_st <- list.files("data", pattern = paste0("nwfsc_st_pred_", sites$site_no,
     year = as.character(year(date)), month = month(date), yday = yday(date)
   )
 
-rr_wb_coho <- readRDS("data/rr_wb_coho.rds")
+crc_sites <- list.files("data", pattern = paste0("wdfw_crc_", sites$site_no, collapse = "|"), full.names = T) |>
+  map_df(~readRDS(.x)) |> 
+  left_join(sites, by = "site_no") |> 
+  select(site_no, station_nm, everything())
+
+  
+#rr_wb_coho <- readRDS("data/rr_wb_coho.rds")
 
 rangeslider_thickness <- 0.05
 #wacolors::pal_vector("ferries",n=46)
+#length(unlist(wacolors::wacolors[1:9])) #50
+#wacolors::pal_vector("washington_pass",n=length(2024:1979))
+
 pal <- set_names(
-  c("#241E33", "#24213E", "#222548", "#1F2A52", "#18305A",
-    "#0F3661", "#043C66", "#00426B", "#00496F", "#004F72",
-    "#005473", "#015A73", "#005F72", "#006371", "#006871",
-    "#016C72", "#007172", "#007673", "#007A73", "#007F73",
-    "#0D8474", "#1E8974", "#2D8D74", "#3A9275", "#459676",
-    "#4F9A77", "#599F78", "#63A37A", "#6DA77B", "#77AB7E",
-    "#81AF80", "#8BB283", "#95B687", "#9EBA8B", "#A7BE8F",
-    "#B0C292", "#B8C693", "#C0CB92", "#C9CF90", "#D3D38D",
-    "#DED78A", "#EADB86", "#F3DE81", "#FBE17B", "#FFE474",
-    "#FFE56C", 
+  c(
+    # "#241E33", "#24213E", "#222548", "#1F2A52", "#18305A",
+    # "#0F3661", "#043C66", "#00426B", "#00496F", "#004F72",
+    # "#005473", "#015A73", "#005F72", "#006371", "#006871",
+    # "#016C72", "#007172", "#007673", "#007A73", "#007F73",
+    # "#0D8474", "#1E8974", "#2D8D74", "#3A9275", "#459676",
+    # "#4F9A77", "#599F78", "#63A37A", "#6DA77B", "#77AB7E",
+    # "#81AF80", "#8BB283", "#95B687", "#9EBA8B", "#A7BE8F",
+    # "#B0C292", "#B8C693", "#C0CB92", "#C9CF90", "#D3D38D",
+    # "#DED78A", "#EADB86", "#F3DE81", "#FBE17B", "#FFE474",
+    # "#FFE56C", 
+    
+    rep(c(wacolors::wacolors$washington_pass, wacolors::wacolors$palouse), 
+        length.out = length(2024:1979)),
+    
     "#B96000", #"#483778"
     "#DF3383", #"#000000FF",
     "#8A6172", "#8A6172"
@@ -217,9 +231,37 @@ plot_tover <- function(site){
     )
 } 
 
+plot_crc <- function(site){
+  d <- crc_sites |>
+    filter(
+      site_no == site,
+      between(statmonth, 6, 10)
+    ) |> 
+    arrange(year, statmonth) |> 
+    mutate(
+      year = as.character(year),
+      statmonth = factor(statmonth, levels = 6:10),
+      year_species = paste0(year,"_",species),
+      est_tot = cumsum(est), .by = c(site_no, station_nm, species, year)
+      ) |> 
+    select(year, species, year_species, statmonth, est_tot)
 
+  p <- d |> 
+    plotly::plot_ly(
+      type = 'scatter', mode = 'lines+markers',
+      name = ~year_species, x = ~statmonth, y = ~est_tot, symbol = ~species,
+      color = ~year, colors = pal
+    ) |>
+    plotly::layout(
+      legend = list(traceorder = 'reversed'),
+      xaxis = list(title = 'Month'),
+      yaxis = list(title = 'Cumulative catch est.')
+    )
+
+  p
+}
+  
 #currently unused
-
 plot_rr_ts <- function(site){
   rr_wb_coho |> 
     filter(site_no == site) |> 
@@ -329,8 +371,6 @@ map_df(url, ~readr::read_csv(.x)) |>
 ```
 
 ```{r data_rebuild_st_pred, eval=FALSE}
-#could also think about adding/integrating NWM via AWS flow_trees_apps.qmd>>nwm_zarr_pull2 
-
 # # #single HUC10 prediction file is n-COMIDs by n-days in 1990-2021
 # # #need to know gage HUC10 to figure out model prediction file
 # # #then need to know gage COMID since values are by COMID-day
@@ -387,50 +427,8 @@ distinct(stp, COMID) |>
 
 ```{r data_rebuild_rr, eval=FALSE}
 #check in with Evan and Colt about compiled estimates from CreelAnalysis, but not in Willapa
-#first part is currently unused read from CRC mdb, which has both Chin and coho but only FW & M spt
-#second currently used is from coho RR maintained by BM, compiles comm catch and escapement (reapportioned to river)
-
-# mdb_file_path <- "~/T/DFW-Team WDFW Watershed Synthesis - data_common/crc/Sport Harvest Estimates 20230213.mdb"
-# 
-# crc <- inner_join(
-#   readr::read_csv(I(
-#     system2(
-#       "mdb-export",
-#       args = paste(str_replace_all(mdb_file_path, " ", "\\\\ "),"Area"),
-#       stdout = T) 
-#   ))
-#   ,
-#   readr::read_csv(I(
-#     system2(
-#       "mdb-export",
-#       args = paste(str_replace_all(mdb_file_path, " ", "\\\\ "),"Catch"),
-#       stdout = T) 
-#   ))
-#   ,  by = "AreaID"
-# ) |> 
-#   select(
-#     AreaCode, AreaName, AreaType, AreaWRIA,
-#     CatchYear, CatchStatMonth, Species, CatchEst #, CatchVariance?
-#   ) |> 
-#   rename_with(~tolower(.) |> str_remove("catch")) |> 
-#   filter(
-#     #year >= 2000,
-#     species %in% c("Coho","Chinook")
-#   )
-# 
-# crc |> 
-#   #filter(str_detect(areaname, "illap|aselle")) |> count(areacode, areaname)
-#   filter(
-#     areacode %in% c("21","375","424"),
-#     between(statmonth, 6, 10),
-#     !(areacode == "21" & year == 1992) #duplication, 
-#     ) |> 
-#   #  pivot_wider(names_from = species, values_from = est)
-#   ggplot() + geom_col(aes(year, est, fill = statmonth)) + 
-#   facet_wrap(~areaname + species, ncol = 3, dir = "v")
-
-
-#Only have coho RR on hand
+#coho RR maintained by BM, compiles comm catch and escapement (reapportioned to river)
+#similar for chin? but only have coho RR on hand
 f<-"../2024 WB4 Coho Run Reconstruction Model Draft 02.01.2024.xlsx"
 # #Marine sport 2.1 is split between pre-2010 in colAY and 2010onward in colP row 73 down
 # bind_cols(
@@ -464,6 +462,219 @@ rr_wb_coho |>
   saveRDS("data/rr_wb_coho.rds")
 
 ```
+
+```{r data_rebuild_crc, eval=FALSE}
+
+# mdb_file_path <- "~/T/DFW-Team WDFW Watershed Synthesis - data_common/crc/Sport Harvest Estimates 20230213.mdb"
+# 
+# crc <- inner_join(
+#   readr::read_csv(I(
+#     system2(
+#       "mdb-export",
+#       args = paste(str_replace_all(mdb_file_path, " ", "\\\\ "),"Area"),
+#       stdout = T) 
+#   ))
+#   ,
+#   readr::read_csv(I(
+#     system2(
+#       "mdb-export",
+#       args = paste(str_replace_all(mdb_file_path, " ", "\\\\ "),"Catch"),
+#       stdout = T) 
+#   ))
+#   ,  by = "AreaID"
+# ) |> 
+#   select(
+#     AreaCode, AreaName, AreaType, AreaWRIA,
+#     CatchYear, CatchStatMonth, Species, CatchEst #, CatchVariance?
+#   ) |> 
+#   rename_with(~tolower(.) |> str_remove("catch")) |> 
+#   filter(
+#     #year >= 2000,
+#     species %in% c("Coho","Chinook")
+#   )
+
+# crc |>
+#   filter(str_detect(areaname, "illap|aselle")) |> 
+#   count(areacode, areaname)
+
+sites$crc_areacode <- c("375", "424")
+
+walk2(
+  sites$site_no,
+  sites$crc_areacode,
+  ~crc |> 
+    filter(areacode == .y) |> 
+    mutate(site_no = .x) |> 
+    saveRDS(file = paste0("data/wdfw_crc_",.x,".rds"))
+)
+
+
+#### dev/exploration
+
+crc |>
+  #filter(str_detect(areaname, "illap|aselle")) |> count(areacode, areaname)
+  filter(
+    areacode %in% c("21","375","424"),
+    between(statmonth, 6, 10),
+    !(areacode == "21" & year == 1992) #duplication,
+    ) |>
+  #  pivot_wider(names_from = species, values_from = est)
+  ggplot() + geom_col(aes(year, est, fill = statmonth)) +
+  facet_wrap(~areaname + species, ncol = 3, dir = "v", scales = "free")
+
+#Naselle 375, Willapa 424
+crc |>
+  filter(
+    areacode == "375",
+    between(statmonth, 6, 10)
+    ) |> 
+  arrange(year, statmonth) |> 
+  mutate(est_tot = cumsum(est), .by = c(areaname, species, year)) |> 
+
+# ggplot(aes(statmonth, est, group = year)) +
+#   geom_line() + geom_point() +
+#   facet_wrap(~species, scales = "free")
+  
+# filter(species == "Chinook") |> 
+# plotly::plot_ly(x = ~statmonth, y = ~est_tot, name = ~year, type = 'scatter', mode = 'lines+markers')
+  
+  #could also just take Oct
+  slice_max(order_by = est_tot, n = 1, by = c(areaname, species, year)) |> 
+  ggplot(aes(year, est_tot)) + geom_col() + facet_wrap(~species, scales = "free")
+
+#summer median of dailymean
+#could look at other flow stats
+usgs_q_dv |> 
+  filter(
+    site_no == "12010000",
+    between(month, 8, 10)
+  ) |> 
+  summarise(
+    across(q_dv_mean, quantile, probs = 0.5, na.rm = T), 
+    .by = c(site_no, year)
+  ) |> 
+  left_join(
+    crc |>
+      filter(
+        areacode == "375",
+        between(statmonth, 6, 10)
+      ) |> 
+      summarise(est = sum(est), .by = c(species,year)) |> 
+      mutate(year = as.character(year)),
+    by = "year"
+  ) |> 
+  #filter(is.na(species))
+  drop_na(species) |> #flow years outside CRC
+  ggplot(aes(q_dv_mean, est)) + 
+  geom_text(aes(label = year)) +
+  facet_wrap(~species, scales = "free")
+
+#maybe interesting? more catch ~ warmer streamtemp estimates
+#but purely spurious and temporal?
+nwfsc_st |> 
+  filter(
+    site_no == "12010000",
+    between(month, 8, 10)
+  ) |> 
+  summarise(
+    across(st_pred, quantile, probs = 0.5, na.rm = T), 
+    .by = c(site_no, year)
+  ) |> 
+  left_join(
+    crc |>
+      filter(
+        areacode == "375",
+        between(statmonth, 6, 10)
+      ) |> 
+      summarise(est = sum(est), .by = c(species,year)) |> 
+      mutate(year = as.character(year)),
+    by = "year"
+  ) |> 
+  #filter(is.na(species))
+  drop_na(species) |> #flow years outside CRC
+  ggplot(aes(st_pred, est)) + 
+  geom_text(aes(label = year)) +
+  geom_smooth(method = 'lm') +
+  facet_wrap(~species, scales = "free")
+
+#anything lm(est ~ st_pred) for Chin seems captured by pure time
+#perhaps not so for coho
+#regress anomaly from long-term mean? [No, just rescales] or resid of lm(est ~ year)
+crc |>
+  filter(
+    areacode == "375",
+    between(statmonth, 6, 10)
+  ) |> 
+  summarise(est = sum(est), .by = c(species,year)) |> 
+  ggplot(aes(year, est)) +
+  geom_text(aes(label = year)) +
+  geom_smooth(method = 'lm') +
+  facet_wrap(~species, scales = "free")
+
+#better!? lm_resid of lm(est ~ year) against median summer estimated stream temp
+#controls Chin somewhat? 
+nwfsc_st |>
+  filter(
+    site_no == "12010000",
+    between(month, 8, 10)
+  ) |>
+  summarise(
+    across(st_pred, quantile, probs = 0.5, na.rm = T),
+    .by = c(site_no, year)
+  ) |>
+  left_join(
+    crc |>
+      filter(
+        areacode == "375",
+        between(statmonth, 6, 10)
+      ) |>
+      summarise(est = sum(est), .by = c(species,year)) |>
+      #mutate(est_dev = (est - mean(est))/mean(est), .by = species) |> #ggplot(aes(year, est_dev, fill = species)) + geom_col() + facet_wrap(~species, scales = "free")
+      nest(data = c(year, est), .by = species) |> 
+      mutate(lm_resid = map(data, ~lm(est ~ year, data = .x)$resid)) |> 
+      unnest(c(data, lm_resid)) |> 
+      mutate(year = as.character(year))
+    ,
+    by = "year"
+  ) |>
+  #filter(is.na(species))
+  drop_na(species) |> #flow years outside CRC
+  #ggplot(aes(st_pred, est_dev)) +
+  ggplot(aes(st_pred, lm_resid)) +
+  geom_text(aes(label = year)) +
+  geom_smooth(method = 'lm') +
+  facet_wrap(~species, scales = "free")
+
+```
+
+```{r data_new_other, eval=FALSE}
+#look at adding/integrating NWM via AWS flow_trees_apps.qmd>>nwm_zarr_pull2 
+
+#look at adding NWRFC 10day and season forecasts
+
+####"natural ensemble" products?
+
+# #single station page: https://www.nwrfc.noaa.gov/natural/plot/nat_forecasts.php?id=WILW1
+# #"data files" section has "CSV" button that seems to cycle through several products 
+# #including WY-to-date hindcast and forecast
+# #and/but actually still html, such that csv displayed in browser is not actually what url hits
+# #would need more httr work to correctly repackage
+# #does not work, and chrome inspect confirms: readr::read_csv(u, skip = 2, comment = "#")
+# "https://www.nwrfc.noaa.gov/natural/plot//nat_text.cgi?id=WILW1&wy=2024&per=APR-SEP&type=ESP10&prob=0"
+# "https://www.nwrfc.noaa.gov/natural/plot//nat_text.cgi?id=WILW1&wy=2024&per=JAN-JUL&type=ESP0&prob=0"
+
+
+#from data downloads page:
+#https://www.nwrfc.noaa.gov/misc/downloads/index.php?type=natural&sortby=date&sortasc=true&filter=
+#works. rows days, 3 times per day; cols individual water year forcings 
+#appears to be what "Forecast Ensemble" button links to from "Data Files" section of station page
+read_csv("https://www.nwrfc.noaa.gov/chpsesp/ensemble/natural/WILW1N_SQIN.ESPF10.csv", skip = 5)
+
+#also have "M" and "0" variants, need to sort
+read_csv("https://www.nwrfc.noaa.gov/chpsesp/ensemble/natural/WILW1N_SQIN.ESPFM.csv", skip = 5)
+
+```
+
 
 # About
 

@@ -346,6 +346,10 @@ This card displays per-year minimum values of daily mean streamflow volume in cf
 
 [`r sites$site_no[2]`](`r paste0('https://waterdata.usgs.gov/monitoring-location/',sites$site_no[2],'/#parameterCode=00060&period=P365D&showMedian=true')`)
 
+[`r sites$site_no[3]`](`r paste0('https://waterdata.usgs.gov/monitoring-location/',sites$site_no[3],'/#parameterCode=00060&period=P365D&showMedian=true')`)
+
+[`r sites$site_no[4]`](`r paste0('https://waterdata.usgs.gov/monitoring-location/',sites$site_no[4],'/#parameterCode=00060&period=P365D&showMedian=true')`)
+
 :::
 
 ::: {.card title="Annual low flow quantiles - Q10, Q05, Q01"}
