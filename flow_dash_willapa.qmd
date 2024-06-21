@@ -43,7 +43,8 @@ usgs_q_dv <- list.files("data", pattern = paste0("usgs_dailyQ_", sites$site_no, 
   #group_by(site_no) |> summarise(dmin = min(date), dmax = max(date))
   tidyr::complete(site_no, date = full_seq(q_obs_range, 1))|> 
   mutate(
-    year = as.character(year(date)), month = month(date), yday = yday(date)
+    year = year(date),
+    month = month(date), yday = yday(date)
     #,q_dv_mean = if_else(q_dv_mean < 0, NA_real_, q_dv_mean)
   ) |> 
   # mutate(
@@ -53,20 +54,22 @@ usgs_q_dv <- list.files("data", pattern = paste0("usgs_dailyQ_", sites$site_no, 
   # ) |> 
   left_join(sites, by = "site_no") |> 
   select(site_no, station_nm, everything())
-#add yday median across years of daily val
-#could do 7day of this for pretty 'smooth' reference
+
+##add yday median daily Q across years (all and decadal) 
 usgs_q_dv <- bind_rows(
-  usgs_q_dv,
-  usgs_q_dv |>
-    group_by(site_no, yday) |>
-    summarise(
-      year = "median",
-      across(
-        starts_with("q_dv"),
-        ~median(.,na.rm=T)
-      ),
-      .groups = "drop"
-    )
+  usgs_q_dv |> mutate(year = as.character(year))
+  ,
+  map2_df(
+    c(1980,1990,2000,2010,1979),
+    c(1989,1999,2009,2019,2024),
+    ~usgs_q_dv |>
+      filter(between(year, .x, .y)) |> 
+      summarise(
+        year = paste0("median_",.x,"_",.y),
+        q_dv_mean = median(q_dv_mean),
+        .by = c(site_no, yday)
+      )
+  )
 )
 
 usgs_bfs <- readRDS("data/usgs_bfs_pred.rds") |> 
@@ -96,31 +99,19 @@ rangeslider_thickness <- 0.05
 
 pal <- set_names(
   c(
-    # "#241E33", "#24213E", "#222548", "#1F2A52", "#18305A",
-    # "#0F3661", "#043C66", "#00426B", "#00496F", "#004F72",
-    # "#005473", "#015A73", "#005F72", "#006371", "#006871",
-    # "#016C72", "#007172", "#007673", "#007A73", "#007F73",
-    # "#0D8474", "#1E8974", "#2D8D74", "#3A9275", "#459676",
-    # "#4F9A77", "#599F78", "#63A37A", "#6DA77B", "#77AB7E",
-    # "#81AF80", "#8BB283", "#95B687", "#9EBA8B", "#A7BE8F",
-    # "#B0C292", "#B8C693", "#C0CB92", "#C9CF90", "#D3D38D",
-    # "#DED78A", "#EADB86", "#F3DE81", "#FBE17B", "#FFE474",
-    # "#FFE56C",
-    
     rep(c(wacolors::wacolors$washington_pass, wacolors::wacolors$palouse), 
         length.out = length(2024:1979)),
-    #median
-    "#B96000", #"#483778"
+    # #median(s)
+    c("#B96000","darkblue","lightgreen","grey80","cyan"),
     #nwm forecast
     alpha("purple",c(0.8,0.4)),
-    #baseflow forecast
-    "#DF3383",
-    "#8A6172", "#8A6172"
+    #usgs baseflow forecast
+    "#DF3383", rep("#8A6172",2)
     ),
   c(2024:1979, 
-    'median',
+    usgs_q_dv |> distinct(year) |> filter(str_detect(year, "median")) |> pull(year) |> sort(), # 'median',
     'nwm_mr_mean', 'nwm_lr_mean',
-    'q_bfs_pred','q_bfs_pred05','q_bfs_pred95'
+    'usgs_bfs','usgs_bfs_05','usgs_bfs_95'
     ))
 
 plot_q_dv <- function(site, log10 = T){
@@ -139,8 +130,8 @@ plot_q_dv <- function(site, log10 = T){
       d,
       usgs_bfs |> 
         filter(site_no == site) |> 
-        select(yday, starts_with("q_bfs")) |> 
-        pivot_longer(cols = starts_with("q_bfs"), 
+        select(yday, starts_with("usgs_bfs")) |> 
+        pivot_longer(cols = starts_with("usgs_bfs"), 
                      names_to = 'year',
                      values_to = 'q_dv_mean'
         )
@@ -412,9 +403,9 @@ map_df(url, ~readr::read_csv(.x)) |>
   mutate(yday = yday(Date)) |>
   select(
     site_no = SiteID, date = Date, yday,
-    q_bfs_pred = Baseflow.cfs,
-    q_bfs_pred05 = StreamflowCB05.cfs,
-    q_bfs_pred95 = StreamflowCB95.cfs
+    usgs_bfs = Baseflow.cfs,
+    usgs_bfs_05 = StreamflowCB05.cfs,
+    usgs_bfs_95 = StreamflowCB95.cfs
     ) |>
     saveRDS("data/usgs_bfs_pred.rds")
 ```
