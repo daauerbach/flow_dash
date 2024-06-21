@@ -27,7 +27,7 @@ sites <- data.frame(
 q_obs_range <- c(as.Date("1979-01-01"), Sys.Date())
 
 
-# # for ongoing dependent data (q_dv and bfs), could/should update relative to render date
+# # for ongoing dependent data (q_dv, nwm, bfs), could/should update relative to render date
 # # possibly modifying 'rebuild' chunks to store as other than rds (csv or sqlite)?
 # Sys.Date() - list.files("data", pattern = "usgs_dailyQ", full.names = T) |> 
 #   file.info() |> mutate(d = date(mtime)) |> pull(d)
@@ -72,6 +72,9 @@ usgs_q_dv <- bind_rows(
 usgs_bfs <- readRDS("data/usgs_bfs_pred.rds") |> 
   filter(site_no %in% sites$site_no)
 
+nwm_fcst <- list.files("data", pattern = paste0("nwm_", sites$site_no, collapse = "|"), full.names = T) |>
+  map_df(~readRDS(.x))
+
 nwfsc_st <- list.files("data", pattern = paste0("nwfsc_st_pred_", sites$site_no, collapse = "|"), full.names = T) |>
   map_df(~readRDS(.x)) |> 
   mutate(
@@ -106,18 +109,30 @@ pal <- set_names(
     
     rep(c(wacolors::wacolors$washington_pass, wacolors::wacolors$palouse), 
         length.out = length(2024:1979)),
-    
+    #median
     "#B96000", #"#483778"
-    "#DF3383", #"#000000FF",
+    #nwm forecast
+    alpha("purple",c(0.8,0.4)),
+    #baseflow forecast
+    "#DF3383",
     "#8A6172", "#8A6172"
     ),
-  c(2024:1979, 'median', 'q_bfs_pred','q_bfs_pred05','q_bfs_pred95'))
+  c(2024:1979, 
+    'median',
+    'nwm_mr_mean', 'nwm_lr_mean',
+    'q_bfs_pred','q_bfs_pred05','q_bfs_pred95'
+    ))
 
 plot_q_dv <- function(site, log10 = T){
 
   d <- usgs_q_dv |>
       filter(site_no==site) |>
-      select(year, yday, q_dv_mean)
+      select(year, yday, q_dv_mean) |> 
+    bind_rows(
+      nwm_fcst |> 
+        filter(site_no == site, str_detect(memb, "mean")) |> 
+        select(yday, year = memb, q_dv_mean = cfs)
+    )
   
   if(site %in% unique(usgs_bfs$site_no)){
     d <- bind_rows(
@@ -402,6 +417,66 @@ map_df(url, ~readr::read_csv(.x)) |>
     q_bfs_pred95 = StreamflowCB95.cfs
     ) |>
     saveRDS("data/usgs_bfs_pred.rds")
+```
+
+```{r data_rebuild_nwm, eval=FALSE}
+sites$COMID <- map_int(
+  sites$site_no,
+  ~nhdplusTools::discover_nhdplus_id(
+    nldi_feature = list(featureSource = "nwissite",
+                        featureID = paste0("USGS-",.x)))
+)
+
+get_nwm <- function(comid){
+  mr <- httr2::request(paste0("https://api.water.noaa.gov/nwps/v1/reaches/",comid,"/streamflow?series=medium_range")) |> 
+    httr2::req_headers(Accept = "application/json") |> 
+    httr2::req_perform() |> 
+    httr2::resp_body_json() |> 
+    purrr::pluck("mediumRange")
+  lr <- httr2::request(paste0("https://api.water.noaa.gov/nwps/v1/reaches/",comid,"/streamflow?series=long_range")) |> 
+    httr2::req_headers(Accept = "application/json") |> 
+    httr2::req_perform() |> 
+    httr2::resp_body_json() |> 
+    purrr::pluck("longRange")
+  #probably a more elegant way to do this...
+  nwm <- set_names(
+    c(mr, lr),
+    c(paste0("mr_",names(mr)),paste0("lr_",names(lr)))
+  ) 
+
+  nwm <- map_df(
+    names(nwm),
+    ~bind_rows(nwm[[.x]]$data) |>
+      mutate(
+        yday = lubridate::yday(lubridate::as_datetime(validTime))
+        # across(contains("Time"),
+        #        ~lubridate::as_datetime(.) |>
+        #          lubridate::yday(),
+        #        .names = "yday"
+        #        )
+      ) |>
+      summarise(
+        cfs = mean(flow), .by = yday,
+        memb = paste0("nwm_",.x)
+      )
+  )
+
+  return(nwm)
+}
+
+# get_nwm(sites$COMID[2]) -> nwm
+# nwm |> pivot_wider(names_from = memb, values_from = flow) |> print(n=Inf)
+
+#server seemingly randomly returns incomplete objects causing errors stemming from 'Column `yday` doesn't exist.'
+#rerun until it works - could try to figure out and add some sort of 'try' logic, but...
+nwm <- map2(
+  sites$site_no, sites$COMID,
+  ~get_nwm(.y) |> 
+    mutate(site_no = .x) 
+  )
+
+walk(nwm,  ~saveRDS(.x, file = paste0("data/nwm_",.x$site_no[1],".rds")))
+
 ```
 
 ```{r data_rebuild_st_pred, eval=FALSE}
