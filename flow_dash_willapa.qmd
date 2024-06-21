@@ -102,7 +102,7 @@ pal <- set_names(
     # "#81AF80", "#8BB283", "#95B687", "#9EBA8B", "#A7BE8F",
     # "#B0C292", "#B8C693", "#C0CB92", "#C9CF90", "#D3D38D",
     # "#DED78A", "#EADB86", "#F3DE81", "#FBE17B", "#FFE474",
-    # "#FFE56C", 
+    # "#FFE56C",
     
     rep(c(wacolors::wacolors$washington_pass, wacolors::wacolors$palouse), 
         length.out = length(2024:1979)),
@@ -156,22 +156,22 @@ plot_q_dv <- function(site, log10 = T){
 }
 #plot_q_dv(sites$site_no[1])
 
-plot_qmin <- function(site){
-  usgs_q_dv |> 
-    filter(site_no == site, year != "2024") |>
-    slice_min(order_by = q_dv_mean, n = 1, by = year, with_ties = F) |>
-    mutate(month = if_else(is.na(month), "med", month.abb[month]) |> 
-             factor(levels = c(month.abb[6:10], "med"))) |> 
-    select(year, month, min_cfs = q_dv_mean) |> 
-    plotly::plot_ly(type = "bar", x = ~year, y = ~min_cfs, color = ~month) |> 
-    plotly::rangeslider(thickness = rangeslider_thickness) |> 
-    plotly::layout(
-      legend = list(title='month'),
-      xaxis = list(title='')
-    )  
-}
+# plot_qmin <- function(site){
+#   usgs_q_dv |>
+#     filter(site_no == site, year != "2024") |>
+#     slice_min(order_by = q_dv_mean, n = 1, by = year, with_ties = F) |>
+#     mutate(month = if_else(is.na(month), "med", month.abb[month]) |>
+#              factor(levels = c(month.abb[6:10], "med"))) |>
+#     select(year, month, min_cfs = q_dv_mean) |>
+#     plotly::plot_ly(type = "bar", x = ~year, y = ~min_cfs, color = ~month) |>
+#     plotly::rangeslider(thickness = rangeslider_thickness) |>
+#     plotly::layout(
+#       legend = list(title='month'),
+#       xaxis = list(title='')
+#     )
+# }
 
-plot_qquant <- function(site){
+plot_q_quant <- function(site){
   usgs_q_dv |> 
     filter(site_no == site, year != "2024") |>
     group_by(year) |> 
@@ -179,15 +179,16 @@ plot_qquant <- function(site){
       q10 = quantile(q_dv_mean, p = 0.10, na.rm = T),
       q05 = quantile(q_dv_mean, p = 0.05, na.rm = T),
       q01 = quantile(q_dv_mean, p = 0.01, na.rm = T),
+      min = min(q_dv_mean),
       .groups = "drop") |>
-    select(year, starts_with("q")) |>
     pivot_longer(-year, names_to = "quantile", values_to = "cfs") |>
     plotly::plot_ly(
       type = "bar", x = ~year, y = ~cfs,
       color = ~quantile, 
       colors = c(q10 = "darkblue",
                  q05 = "blue",
-                 q01 = "lightblue"
+                 q01 = "lightblue",
+                 min = "#016C72"
                  )) |>
     plotly::rangeslider(thickness = rangeslider_thickness) |>
     plotly::layout(
@@ -195,6 +196,39 @@ plot_qquant <- function(site){
       xaxis = list(title='')
     )
 } 
+
+plot_t_dv <- function(site){
+
+  d <- nwfsc_st |>
+      filter(site_no==site) |>
+      select(year, yday, st_pred)
+  
+  p <- d |> 
+    plotly::plot_ly(
+      type = 'scatter', mode = 'lines',
+      name = ~year, x = ~yday, y = ~st_pred,
+      color = ~year, colors = pal
+    ) |>
+    plotly::layout(
+      legend = list(traceorder = 'reversed'),
+      shapes = list(
+        list(type = "rect", fillcolor = "red", opacity = 0.2, 
+             y0 = 20, y1 = 22, x0 = 0, x1 = 366),
+        list(type = "rect", fillcolor = "orange", opacity = 0.2, 
+             y0 = 18, y1 = 20, x0 = 0, x1 = 366),
+        list(type = "rect", fillcolor = "yellow", opacity = 0.2, 
+             y0 = 16, y1 = 18, x0 = 0, x1 = 366)
+      ),
+      xaxis = list(
+        title = 'Day of year', 
+        ticktext = format(seq.Date(as.Date("2024-01-01"),as.Date("2024-12-01"), by = 'month'),  format = '%b-%d'),
+        tickvals = yday(seq.Date(as.Date("2024-01-01"),as.Date("2024-12-01"), by = 'month'))
+        ),
+      yaxis = list(title = 'degC')
+    )
+
+  p
+}
 
 plot_tmax <- function(site){
   nwfsc_st |> 
@@ -464,7 +498,6 @@ rr_wb_coho |>
 ```
 
 ```{r data_rebuild_crc, eval=FALSE}
-
 # mdb_file_path <- "~/T/DFW-Team WDFW Watershed Synthesis - data_common/crc/Sport Harvest Estimates 20230213.mdb"
 # 
 # crc <- inner_join(
@@ -507,143 +540,6 @@ walk2(
     mutate(site_no = .x) |> 
     saveRDS(file = paste0("data/wdfw_crc_",.x,".rds"))
 )
-
-
-#### dev/exploration
-
-crc |>
-  #filter(str_detect(areaname, "illap|aselle")) |> count(areacode, areaname)
-  filter(
-    areacode %in% c("21","375","424"),
-    between(statmonth, 6, 10),
-    !(areacode == "21" & year == 1992) #duplication,
-    ) |>
-  #  pivot_wider(names_from = species, values_from = est)
-  ggplot() + geom_col(aes(year, est, fill = statmonth)) +
-  facet_wrap(~areaname + species, ncol = 3, dir = "v", scales = "free")
-
-#Naselle 375, Willapa 424
-crc |>
-  filter(
-    areacode == "375",
-    between(statmonth, 6, 10)
-    ) |> 
-  arrange(year, statmonth) |> 
-  mutate(est_tot = cumsum(est), .by = c(areaname, species, year)) |> 
-
-# ggplot(aes(statmonth, est, group = year)) +
-#   geom_line() + geom_point() +
-#   facet_wrap(~species, scales = "free")
-  
-# filter(species == "Chinook") |> 
-# plotly::plot_ly(x = ~statmonth, y = ~est_tot, name = ~year, type = 'scatter', mode = 'lines+markers')
-  
-  #could also just take Oct
-  slice_max(order_by = est_tot, n = 1, by = c(areaname, species, year)) |> 
-  ggplot(aes(year, est_tot)) + geom_col() + facet_wrap(~species, scales = "free")
-
-#summer median of dailymean
-#could look at other flow stats
-usgs_q_dv |> 
-  filter(
-    site_no == "12010000",
-    between(month, 8, 10)
-  ) |> 
-  summarise(
-    across(q_dv_mean, quantile, probs = 0.5, na.rm = T), 
-    .by = c(site_no, year)
-  ) |> 
-  left_join(
-    crc |>
-      filter(
-        areacode == "375",
-        between(statmonth, 6, 10)
-      ) |> 
-      summarise(est = sum(est), .by = c(species,year)) |> 
-      mutate(year = as.character(year)),
-    by = "year"
-  ) |> 
-  #filter(is.na(species))
-  drop_na(species) |> #flow years outside CRC
-  ggplot(aes(q_dv_mean, est)) + 
-  geom_text(aes(label = year)) +
-  facet_wrap(~species, scales = "free")
-
-#maybe interesting? more catch ~ warmer streamtemp estimates
-#but purely spurious and temporal?
-nwfsc_st |> 
-  filter(
-    site_no == "12010000",
-    between(month, 8, 10)
-  ) |> 
-  summarise(
-    across(st_pred, quantile, probs = 0.5, na.rm = T), 
-    .by = c(site_no, year)
-  ) |> 
-  left_join(
-    crc |>
-      filter(
-        areacode == "375",
-        between(statmonth, 6, 10)
-      ) |> 
-      summarise(est = sum(est), .by = c(species,year)) |> 
-      mutate(year = as.character(year)),
-    by = "year"
-  ) |> 
-  #filter(is.na(species))
-  drop_na(species) |> #flow years outside CRC
-  ggplot(aes(st_pred, est)) + 
-  geom_text(aes(label = year)) +
-  geom_smooth(method = 'lm') +
-  facet_wrap(~species, scales = "free")
-
-#anything lm(est ~ st_pred) for Chin seems captured by pure time
-#perhaps not so for coho
-#regress anomaly from long-term mean? [No, just rescales] or resid of lm(est ~ year)
-crc |>
-  filter(
-    areacode == "375",
-    between(statmonth, 6, 10)
-  ) |> 
-  summarise(est = sum(est), .by = c(species,year)) |> 
-  ggplot(aes(year, est)) +
-  geom_text(aes(label = year)) +
-  geom_smooth(method = 'lm') +
-  facet_wrap(~species, scales = "free")
-
-#better!? lm_resid of lm(est ~ year) against median summer estimated stream temp
-#controls Chin somewhat? 
-nwfsc_st |>
-  filter(
-    site_no == "12010000",
-    between(month, 8, 10)
-  ) |>
-  summarise(
-    across(st_pred, quantile, probs = 0.5, na.rm = T),
-    .by = c(site_no, year)
-  ) |>
-  left_join(
-    crc |>
-      filter(
-        areacode == "375",
-        between(statmonth, 6, 10)
-      ) |>
-      summarise(est = sum(est), .by = c(species,year)) |>
-      #mutate(est_dev = (est - mean(est))/mean(est), .by = species) |> #ggplot(aes(year, est_dev, fill = species)) + geom_col() + facet_wrap(~species, scales = "free")
-      nest(data = c(year, est), .by = species) |> 
-      mutate(lm_resid = map(data, ~lm(est ~ year, data = .x)$resid)) |> 
-      unnest(c(data, lm_resid)) |> 
-      mutate(year = as.character(year))
-    ,
-    by = "year"
-  ) |>
-  #filter(is.na(species))
-  drop_na(species) |> #flow years outside CRC
-  #ggplot(aes(st_pred, est_dev)) +
-  ggplot(aes(st_pred, lm_resid)) +
-  geom_text(aes(label = year)) +
-  geom_smooth(method = 'lm') +
-  facet_wrap(~species, scales = "free")
 
 ```
 
@@ -696,31 +592,26 @@ As for all other cards:
 
 ## Row
 
-::: {.card title="Annual min. daily mean Q"}
+::: {.card title="Annual low flows: Q10, Q05, Q01, Qmin"}
 This card displays per-year minimum values of daily mean streamflow volume in cfs (cubic feet per second) as measured at the USGS gaging stations (`r paste(unlist(unite(sites, col = "nn", sep = " ")), collapse = " & ")`).
 
 [`r sites$site_no[1]`](`r paste0('https://waterdata.usgs.gov/monitoring-location/',sites$site_no[1],'/#parameterCode=00060&period=P365D&showMedian=true')`)
 
 [`r sites$site_no[2]`](`r paste0('https://waterdata.usgs.gov/monitoring-location/',sites$site_no[2],'/#parameterCode=00060&period=P365D&showMedian=true')`)
 
+In addition to the annual minimum, per-year sample quantiles illustrate longer term relative differences at several low flow magnitudes. For example, ~90% of observed daily mean flows in a year were greater than and ~10% were less than the dark blue 'Q10'.
 :::
 
-::: {.card title="Annual low flow quantiles - Q10, Q05, Q01"}
-Based on the same data as the annual minimum, per-year sample quantiles of daily streamflow are shown to illustrate longer term relative differences in several magnitudes of 'low' flow. For example, the dark blue 'Q10' shown here represents the value at which ~90% of observed daily mean flows in a year were greater and ~10% were lower. 
+::: {.card title="Annual Catch Record Card estimates"}
+This card displays annual estimated Chinook and coho recreational harvest in the [CRC](https://wdfw.wa.gov/licenses/fishing/catch-record-card) data records. 
 :::
 
 ::: {.card title="Annual max pred. daily stream temp, Siegel et al. 2023"}
-This card displays per-year maximum values of the [Siegel et al. 2023](https://journals.plos.org/water/article?id=10.1371/journal.pwat.0000119) estimated daily stream temperature for the medium resolution NHD+ COMID (flowline+local catchment) associated with the displayed USGS streamflow gage.
+This card displays the [Siegel et al. 2023](https://journals.plos.org/water/article?id=10.1371/journal.pwat.0000119) estimated daily stream temperature for the medium resolution NHD+ COMID (flowline+local catchment) associated with the displayed USGS streamflow gage.
 
 Fitting to the NorWeST database, "This model reflects mechanistic processes using publicly available climate and landscape covariates in a Generalized Additive Model framework. We allowed covariates to interact while accounting for nonlinear relationships between temporal and spatial covariates to better capture seasonal patterns."
 
 Values displayed here are from the [publicly available datasets of results](https://zenodo.org/records/8174951).
-:::
-
-::: {.card title="Annual days above degC, Siegel et al. 2023"}
-Based on the same data as the annual maximum estimated stream temp displayed above, this card shows the number of days per year with values greater than 18 (yellow) and 20 (orange) degrees C.
-
-This tally is a simple index of relative differences through time, and is *not* equivalent to the 7-DADMax used for [WQS aquatic life temperature criteria](https://app.leg.wa.gov/WAC/default.aspx?cite=173-201A-200) and [303(d) assesments](https://ecology.wa.gov/Water-Shorelines/Water-quality/Water-improvement/Assessment-of-state-waters-303d) as [discoverable elsewhere](https://mywaterway.epa.gov/state/WA/advanced-search).
 :::
 
 
@@ -733,31 +624,27 @@ i <- 1
 ## Row
 
 ```{r}
-#| title: Daily mean Q + BFS forecast
+#| title: Flows - observed & forecast
 plot_q_dv(site = sites$site_no[i], log10 = T)
 ```
 
 ## Row
 
 ```{r}
-#| title: Annual min. daily mean Q
-plot_qmin(sites$site_no[i])
+#| title: Annual low flows
+plot_q_quant(sites$site_no[i])
 ```
 
 ```{r}
-#| title: Annual low flow quantiles - Q10, Q05, Q01
-plot_qquant(sites$site_no[i])
+#| title: Catch (CRC)
+plot_crc(sites$site_no[i])
 ```
 
 ```{r}
-#| title: Annual max pred. daily stream temp, Siegel et al. 2023
-plot_tmax(sites$site_no[i])
+#| title: Stream temp (Siegel et al. 2023)
+plot_t_dv(sites$site_no[i])
 ```
 
-```{r}
-#| title: Annual days above degC, Siegel et al. 2023
-plot_tover(sites$site_no[i])
-```
 
 
 ```{r, include=FALSE}
@@ -769,28 +656,24 @@ i <- 2
 ## Row
 
 ```{r}
-#| title: Daily mean Q + BFS forecast
+#| title: Flows - observed & forecast
 plot_q_dv(site = sites$site_no[i], log10 = T)
 ```
 
 ## Row
 
 ```{r}
-#| title: Annual min. daily mean Q
-plot_qmin(sites$site_no[i])
+#| title: Annual low flows
+plot_q_quant(sites$site_no[i])
 ```
 
 ```{r}
-#| title: Annual low flow quantiles - Q10, Q05, Q01
-plot_qquant(sites$site_no[i])
+#| title: Catch (CRC)
+plot_crc(sites$site_no[i])
 ```
 
 ```{r}
-#| title: Annual max pred. daily stream temp, Siegel et al. 2023
-plot_tmax(sites$site_no[i])
+#| title: Stream temp (Siegel et al. 2023)
+plot_t_dv(sites$site_no[i])
 ```
 
-```{r}
-#| title: Annual days above degC, Siegel et al. 2023
-plot_tover(sites$site_no[i])
-```
