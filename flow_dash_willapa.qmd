@@ -439,20 +439,14 @@ get_nwm <- function(comid){
 
   nwm <- map_df(
     names(nwm),
-    ~bind_rows(nwm[[.x]]$data) |>
-      mutate(
-        yday = lubridate::yday(lubridate::as_datetime(validTime))
-        # across(contains("Time"),
-        #        ~lubridate::as_datetime(.) |>
-        #          lubridate::yday(),
-        #        .names = "yday"
-        #        )
-      ) |>
-      summarise(
-        cfs = mean(flow), .by = yday,
-        memb = paste0("nwm_",.x)
-      )
-  )
+    ~bind_rows(nwm[[.x]]$data) |> mutate(memb = paste0("nwm_",.x))
+  ) |>
+    mutate(
+      yday = lubridate::yday(lubridate::as_datetime(validTime))
+    ) |>
+    summarise(
+      cfs = mean(flow), .by = c(memb,yday)
+    )
 
   return(nwm)
 }
@@ -460,8 +454,6 @@ get_nwm <- function(comid){
 # get_nwm(sites$COMID[2]) -> nwm
 # nwm |> pivot_wider(names_from = memb, values_from = flow) |> print(n=Inf)
 
-#server seemingly randomly returns incomplete objects causing errors stemming from 'Column `yday` doesn't exist.'
-#rerun until it works - could try to figure out and add some sort of 'try' logic, but...
 nwm <- map2(
   sites$site_no, sites$COMID,
   ~get_nwm(.y) |> 

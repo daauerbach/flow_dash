@@ -4,6 +4,8 @@ format: html
 embed-resources: true
 ---
 
-Temporarly landing page
+Temporary landing page
 
 [Willapa Bay](flow_dash_willapa.html)
+
+[WA N Coast](flow_dash_ncoast.html)
