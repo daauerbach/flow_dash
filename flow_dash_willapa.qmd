@@ -117,8 +117,8 @@ pal <- set_names(
 plot_q_dv <- function(site, log10 = T){
 
   d <- usgs_q_dv |>
-      filter(site_no==site) |>
-      select(year, yday, q_dv_mean) |> 
+    filter(site_no==site) |>
+    select(date, year, yday, q_dv_mean) |> 
     bind_rows(
       nwm_fcst |> 
         filter(site_no == site, str_detect(memb, "mean")) |> 
@@ -142,7 +142,8 @@ plot_q_dv <- function(site, log10 = T){
     plotly::plot_ly(
       type = 'scatter', mode = 'lines',
       name = ~year, x = ~yday, y = ~q_dv_mean,
-      color = ~year, colors = pal
+      color = ~year, colors = pal,
+      hovertext = ~format(date, format = '%b-%d')
     ) |>
     plotly::layout(
       legend = list(traceorder = 'reversed'),
@@ -207,13 +208,14 @@ plot_t_dv <- function(site){
 
   d <- nwfsc_st |>
       filter(site_no==site) |>
-      select(year, yday, st_pred)
+      select(date, year, yday, st_pred)
   
   p <- d |> 
     plotly::plot_ly(
       type = 'scatter', mode = 'lines',
       name = ~year, x = ~yday, y = ~st_pred,
-      color = ~year, colors = pal
+      color = ~year, colors = pal,
+      hovertext = ~format(date, format = '%b-%d')
     ) |>
     plotly::layout(
       legend = list(traceorder = 'reversed'),
@@ -642,10 +644,10 @@ read_csv("https://www.nwrfc.noaa.gov/chpsesp/ensemble/natural/WILW1N_SQIN.ESPFM.
 
 ## Row
 
-::: {.card title="Daily mean Q + BFS forecast"}
+::: {.card title="Daily flows - observed & forecast"}
 This card displays mean daily streamflow per-day-of-year overlaid by year, with the median per day across years for reference.
 
-In addition, the USGS WA Water Science Center has recently developed near-term [baseflow forecasts ](https://www.usgs.gov/tools/baseflow-forecasts-selected-sites-united-states), and the [current predictions](https://wa.water.usgs.gov/projects/baseflows/BFS_downloads_index.html) are shown with confidence intervals.
+In addition, [current predictions](https://wa.water.usgs.gov/projects/baseflows/BFS_downloads_index.html) and confidence intervals from the USGS WA Water Science Center near-term [baseflow forecast](https://www.usgs.gov/tools/baseflow-forecasts-selected-sites-united-states) are shown alongside National Water Model [(NWM)](https://water.noaa.gov/about/nwm) reach streamflow forecasts from NOAA's National Water Prediction Service [NWPS API](https://api.water.noaa.gov/nwps/v1/docs/). 
 
 As for all other cards:
 
@@ -654,6 +656,8 @@ As for all other cards:
   - double-click on any legend entry to highlight it (then single-click others to add individually or double-click again to return all) 
   
   - zoom to any area of interest.
+ 
+built `r Sys.time()`
 :::
 
 ## Row
@@ -672,7 +676,7 @@ In addition to the annual minimum, per-year sample quantiles illustrate longer t
 This card displays annual estimated Chinook and coho recreational harvest in the [CRC](https://wdfw.wa.gov/licenses/fishing/catch-record-card) data records. 
 :::
 
-::: {.card title="Annual max pred. daily stream temp, Siegel et al. 2023"}
+::: {.card title="Estimated daily stream temperatures, Siegel et al. 2023"}
 This card displays the [Siegel et al. 2023](https://journals.plos.org/water/article?id=10.1371/journal.pwat.0000119) estimated daily stream temperature for the medium resolution NHD+ COMID (flowline+local catchment) associated with the displayed USGS streamflow gage.
 
 Fitting to the NorWeST database, "This model reflects mechanistic processes using publicly available climate and landscape covariates in a Generalized Additive Model framework. We allowed covariates to interact while accounting for nonlinear relationships between temporal and spatial covariates to better capture seasonal patterns."
