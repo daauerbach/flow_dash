@@ -1,0 +1,598 @@
+---
+title: "FLOWdash Skagit"
+logo: assets/wdfw_logo_stacked_fullcolor.png
+format: 
+  dashboard:
+    orientation: rows
+theme: lux
+embed-resources: true
+---
+
+```{r setup, include=FALSE, warning=FALSE, message=FALSE}
+#knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, fig.width = 10, fig.height = 13)
+
+library("tidyverse", quietly = T)
+theme_set(theme_minimal()) 
+
+# #workbook of basic site/station metadata: `usgs_sites`
+# readxl::read_excel("~/T/DFW-Team WDFW Watershed Synthesis - flow_trees_heat/usgs_sites_dailyQ_focal.xlsx") |>
+#   select(site_no, station_nm) |>
+#   mutate(station_nm = str_remove(station_nm, ", WA$") |> str_replace("RIVER", "R") |> str_to_title()) |> 
+#   filter(str_detect(station_nm, "kagi")) |> arrange(site_no)
+
+sites <- data.frame(
+  site_no = c("12200500","12194000"),
+  station_nm = c("Skagit R Near Mount Vernon", "Skagit R Near Concrete")
+)
+  
+q_obs_range <- c(as.Date("1979-01-01"), Sys.Date())
+
+
+# # for ongoing dependent data (q_dv, nwm, bfs), could/should update relative to render date
+# # possibly modifying 'rebuild' chunks to store as other than rds (csv or sqlite)?
+# Sys.Date() - list.files("data", pattern = "usgs_dailyQ", full.names = T) |> 
+#   file.info() |> mutate(d = date(mtime)) |> pull(d)
+
+
+#build uniform object inserting NAs for missing obs during q_obs_range
+#rebuild/overwrite y, m, and yday since `complete` inserts many NAs
+#then calc per site per CALENDAR year 
+# - cumulative sum of daily mean flow (weird but useful proxy for overall annual volume, 'wet/dry year')
+# - 7day moving average of daily mean flow
+usgs_q_dv <- list.files("data", pattern = paste0("usgs_dailyQ_", sites$site_no, collapse = "|"), full.names = T) |>
+  map_df(~readRDS(.x)) |> 
+  #group_by(site_no) |> summarise(dmin = min(date), dmax = max(date))
+  tidyr::complete(site_no, date = full_seq(q_obs_range, 1))|> 
+  mutate(
+    year = year(date),
+    month = month(date), yday = yday(date)
+    #,q_dv_mean = if_else(q_dv_mean < 0, NA_real_, q_dv_mean)
+  ) |> 
+  # mutate(
+  #   q_dv_mean_sum = cumsum(q_dv_mean),
+  #   #,q_dv_mean_7d = slider::slide_dbl(q_dv_mean, ~mean(., na.rm=T), .before = 3, .after = 3),
+  #   .by = c(site_no, year)
+  # ) |> 
+  left_join(sites, by = "site_no") |> 
+  select(site_no, station_nm, everything())
+
+##add yday median daily Q across years (all and decadal) 
+usgs_q_dv <- bind_rows(
+  usgs_q_dv |> mutate(year = as.character(year))
+  ,
+  map2_df(
+    c(1980,1990,2000,2010,1979),
+    c(1989,1999,2009,2019,2024),
+    ~usgs_q_dv |>
+      filter(between(year, .x, .y)) |> 
+      summarise(
+        year = paste0("median_",.x,"_",.y),
+        q_dv_mean = median(q_dv_mean),
+        .by = c(site_no, yday)
+      )
+  )
+)
+
+usgs_bfs <- readRDS("data/usgs_bfs_pred.rds") |> 
+  filter(site_no %in% sites$site_no)
+
+nwm_fcst <- list.files("data", pattern = paste0("nwm_", sites$site_no, collapse = "|"), full.names = T) |>
+  map_df(~readRDS(.x))
+
+# nwfsc_st <- list.files("data", pattern = paste0("nwfsc_st_pred_", sites$site_no, collapse = "|"), full.names = T) |>
+#   map_df(~readRDS(.x)) |> 
+#   mutate(
+#     year = as.character(year(date)), month = month(date), yday = yday(date)
+#   )
+
+crc_sites <- list.files("data", pattern = paste0("wdfw_crc_", sites$site_no, collapse = "|"), full.names = T) |>
+  map_df(~readRDS(.x)) |> 
+  left_join(sites, by = "site_no") |> 
+  select(site_no, station_nm, everything())
+
+  
+#rr_wb_coho <- readRDS("data/rr_wb_coho.rds")
+
+rangeslider_thickness <- 0.05
+#wacolors::pal_vector("ferries",n=46)
+#length(unlist(wacolors::wacolors[1:9])) #50
+#wacolors::pal_vector("washington_pass",n=length(2024:1979))
+
+pal <- set_names(
+  c(
+    rep(c(wacolors::wacolors$washington_pass, wacolors::wacolors$palouse), 
+        length.out = length(2024:1979)),
+    # #median(s)
+    c("#B96000","darkblue","lightgreen","grey80","cyan"),
+    #nwm forecast
+    alpha("purple",c(0.8,0.4)),
+    #usgs baseflow forecast
+    "#DF3383", rep("#8A6172",2)
+    ),
+  c(2024:1979, 
+    usgs_q_dv |> distinct(year) |> filter(str_detect(year, "median")) |> pull(year) |> sort(), # 'median',
+    'nwm_mr_mean', 'nwm_lr_mean',
+    'usgs_bfs','usgs_bfs_05','usgs_bfs_95'
+    ))
+
+plot_q_dv <- function(site, log10 = T){
+
+  d <- usgs_q_dv |>
+    filter(site_no==site) |>
+    select(date, year, yday, q_dv_mean) |> 
+    bind_rows(
+      nwm_fcst |> 
+        filter(site_no == site, str_detect(memb, "mean")) |> 
+        select(yday, year = memb, q_dv_mean = cfs)
+    )
+  
+  if(site %in% unique(usgs_bfs$site_no)){
+    d <- bind_rows(
+      d,
+      usgs_bfs |> 
+        filter(site_no == site) |> 
+        select(yday, starts_with("usgs_bfs")) |> 
+        pivot_longer(cols = starts_with("usgs_bfs"), 
+                     names_to = 'year',
+                     values_to = 'q_dv_mean'
+        )
+      )
+  }
+  
+  p <- d |> 
+    plotly::plot_ly(
+      type = 'scatter', mode = 'lines',
+      name = ~year, x = ~yday, y = ~q_dv_mean,
+      color = ~year, colors = pal,
+      hovertext = ~format(date, format = '%b-%d')
+    ) |>
+    plotly::layout(
+      legend = list(traceorder = 'reversed'),
+      xaxis = list(
+        title = 'Day of year', 
+        ticktext = format(seq.Date(as.Date("2024-01-01"),as.Date("2024-12-01"), by = 'month'),  format = '%b-%d'),
+        tickvals = yday(seq.Date(as.Date("2024-01-01"),as.Date("2024-12-01"), by = 'month'))
+        ),
+      yaxis = list(title = 'cfs')
+    )
+
+  if (log10){
+    p <- p |> plotly::layout(yaxis = list(type = "log"))
+  }
+
+  p
+}
+#plot_q_dv(sites$site_no[1])
+
+plot_q_quant <- function(site){
+  usgs_q_dv |> 
+    filter(site_no == site, year != "2024") |>
+    group_by(year) |> 
+    summarise(
+      q10 = quantile(q_dv_mean, p = 0.10, na.rm = T),
+      q05 = quantile(q_dv_mean, p = 0.05, na.rm = T),
+      q01 = quantile(q_dv_mean, p = 0.01, na.rm = T),
+      min = min(q_dv_mean),
+      .groups = "drop") |>
+    pivot_longer(-year, names_to = "quantile", values_to = "cfs") |>
+    plotly::plot_ly(
+      type = "bar", x = ~year, y = ~cfs,
+      color = ~quantile, 
+      colors = c(q10 = "darkblue",
+                 q05 = "blue",
+                 q01 = "lightblue",
+                 min = "#016C72"
+                 )) |>
+    plotly::rangeslider(thickness = rangeslider_thickness) |>
+    plotly::layout(
+      #barmode = 'overlay',
+      xaxis = list(title='')
+    )
+} 
+
+plot_t_dv <- function(site){
+
+  d <- nwfsc_st |>
+      filter(site_no==site) |>
+      select(date, year, yday, st_pred)
+  
+  p <- d |> 
+    plotly::plot_ly(
+      type = 'scatter', mode = 'lines',
+      name = ~year, x = ~yday, y = ~st_pred,
+      color = ~year, colors = pal,
+      hovertext = ~format(date, format = '%b-%d')
+    ) |>
+    plotly::layout(
+      legend = list(traceorder = 'reversed'),
+      shapes = list(
+        list(type = "rect", fillcolor = "red", opacity = 0.2, 
+             y0 = 20, y1 = 22, x0 = 0, x1 = 366),
+        list(type = "rect", fillcolor = "orange", opacity = 0.2, 
+             y0 = 18, y1 = 20, x0 = 0, x1 = 366),
+        list(type = "rect", fillcolor = "yellow", opacity = 0.2, 
+             y0 = 16, y1 = 18, x0 = 0, x1 = 366)
+      ),
+      xaxis = list(
+        title = 'Day of year', 
+        ticktext = format(seq.Date(as.Date("2024-01-01"),as.Date("2024-12-01"), by = 'month'),  format = '%b-%d'),
+        tickvals = yday(seq.Date(as.Date("2024-01-01"),as.Date("2024-12-01"), by = 'month'))
+        ),
+      yaxis = list(title = 'degC')
+    )
+
+  p
+}
+
+plot_tmax <- function(site){
+  nwfsc_st |> 
+    filter(site_no == site) |> 
+    slice_max(order_by = st_pred, n = 1, by = year, with_ties = F) |>
+    mutate(month = if_else(is.na(month), "med", month.abb[month]) |> 
+             factor(levels = c(month.abb[6:10], "med"))) |> 
+    select(year, month, max_degC = st_pred) |> 
+    plotly::plot_ly( type = "bar", x = ~year, y = ~max_degC, color = ~month) |> 
+    plotly::rangeslider(thickness = rangeslider_thickness) |> 
+    plotly::layout(
+      legend = list(title='month'),
+      xaxis = list(title='')
+    )  
+}
+
+plot_tover <- function(site){
+  #degree thresholds are too hard-coded, but just to get started 
+  nwfsc_st |> 
+    filter(site_no == site) |> 
+    group_by(year) |> 
+    summarise(
+      days_over18 = sum(st_pred > 18),
+      days_over20 = sum(st_pred > 20),
+      .groups = "drop") |>
+    select(year, starts_with("days_over")) |>
+    pivot_longer(-year, names_to = "over", values_to = "days") |> 
+    plotly::plot_ly(
+      type = "bar", x = ~year, y = ~days, 
+      color = ~over, colors = c(days_over18 = "yellow", days_over20 = "orange")) |>
+    plotly::rangeslider(thickness = rangeslider_thickness) |>
+    plotly::layout(
+      xaxis = list(title='')
+    )
+} 
+
+plot_crc <- function(site){
+  d <- crc_sites |>
+    filter(
+      site_no == site,
+      between(statmonth, 6, 10)
+    ) |> 
+    arrange(year, statmonth) |> 
+    mutate(
+      year = as.character(year),
+      statmonth = factor(statmonth, levels = 6:10),
+      year_species = paste0(year,"_",species),
+      est_tot = cumsum(est), .by = c(site_no, station_nm, species, year)
+      ) |> 
+    select(year, species, year_species, statmonth, est_tot)
+
+  p <- d |> 
+    plotly::plot_ly(
+      type = 'scatter', mode = 'lines+markers',
+      name = ~year_species, x = ~statmonth, y = ~est_tot, symbol = ~species,
+      color = ~year, colors = pal
+    ) |>
+    plotly::layout(
+      legend = list(traceorder = 'reversed'),
+      xaxis = list(title = 'Month'),
+      yaxis = list(title = 'Cumulative catch est.')
+    )
+
+  p
+}
+  
+```
+
+```{r data_rebuild_q_dv, eval=FALSE}
+#not `complete()` here since no reason to store potentially lots of NA for long qobsrange
+walk(
+  sites$site_no
+  ,
+  ~dataRetrieval::readNWISdv(
+    .x, parameterCd = "00060",
+    startDate = q_obs_range[1],
+    endDate = q_obs_range[2]
+    ) |>
+    as_tibble() |>
+    mutate(year = year(Date), month = month(Date), yday = yday(Date)) |>
+    select(site_no, date = Date, year, month, yday, q_dv_mean = X_00060_00003) |>
+    saveRDS(paste0("data/usgs_dailyQ_", .x,".rds"))
+)
+```
+
+```{r data_rebuild_bfs, eval=FALSE}
+#add new USGS baseflow predictions...
+huc4 <- c("1710","1711")
+url <- paste0("https://wa.water.usgs.gov/projects/baseflows/out/bfprj_HUC",huc4,".csv")
+map_df(url, ~readr::read_csv(.x)) |>
+  mutate(yday = yday(Date)) |>
+  select(
+    site_no = SiteID, date = Date, yday,
+    usgs_bfs = Baseflow.cfs,
+    usgs_bfs_05 = StreamflowCB05.cfs,
+    usgs_bfs_95 = StreamflowCB95.cfs
+    ) |>
+    saveRDS("data/usgs_bfs_pred.rds")
+```
+
+```{r data_rebuild_nwm, eval=FALSE}
+sites$COMID <- map_int(
+  sites$site_no,
+  ~nhdplusTools::discover_nhdplus_id(
+    nldi_feature = list(featureSource = "nwissite",
+                        featureID = paste0("USGS-",.x)))
+)
+
+get_nwm <- function(comid){
+  mr <- httr2::request(paste0("https://api.water.noaa.gov/nwps/v1/reaches/",comid,"/streamflow?series=medium_range")) |> 
+    httr2::req_headers(Accept = "application/json") |> 
+    httr2::req_perform() |> 
+    httr2::resp_body_json() |> 
+    purrr::pluck("mediumRange")
+  lr <- httr2::request(paste0("https://api.water.noaa.gov/nwps/v1/reaches/",comid,"/streamflow?series=long_range")) |> 
+    httr2::req_headers(Accept = "application/json") |> 
+    httr2::req_perform() |> 
+    httr2::resp_body_json() |> 
+    purrr::pluck("longRange")
+  #probably a more elegant way to do this...
+  nwm <- set_names(
+    c(mr, lr),
+    c(paste0("mr_",names(mr)),paste0("lr_",names(lr)))
+  ) 
+
+  nwm <- map_df(
+    names(nwm),
+    ~bind_rows(nwm[[.x]]$data) |> mutate(memb = paste0("nwm_",.x))
+  ) |>
+    mutate(
+      yday = lubridate::yday(lubridate::as_datetime(validTime))
+    ) |>
+    summarise(
+      cfs = mean(flow), .by = c(memb,yday)
+    )
+
+  return(nwm)
+}
+
+# get_nwm(sites$COMID[2]) -> nwm
+# nwm |> pivot_wider(names_from = memb, values_from = flow) |> print(n=Inf)
+
+nwm <- map2(
+  sites$site_no, sites$COMID,
+  ~get_nwm(.y) |> 
+    mutate(site_no = .x) 
+  )
+
+walk(nwm,  ~saveRDS(.x, file = paste0("data/nwm_",.x$site_no[1],".rds")))
+
+```
+
+```{r data_rebuild_st_pred, eval=FALSE}
+# # #single HUC10 prediction file is n-COMIDs by n-days in 1990-2021
+# # #need to know gage HUC10 to figure out model prediction file
+# # #then need to know gage COMID since values are by COMID-day
+# # #but gage/reach may or may not actually be in the dataset
+
+# #gets HUC10 by service given an sf object
+# #this workbook already has HUC8s per gage...
+
+sites <- sites |> 
+  left_join(
+    readxl::read_excel("~/T/DFW-Team WDFW Watershed Synthesis - flow_trees_heat/usgs_sites_dailyQ_focal.xlsx") |>
+      filter(site_no %in% sites$site_no) |> 
+      select(site_no, lon = dec_long_va, lat = dec_lat_va) |>
+      mutate(
+        huc10 = map2_chr(
+          lon, lat,
+          ~suppressMessages(
+            nhdplusTools::get_huc(
+              sf::st_as_sf(data.frame(lon = .x, lat = .y), coords = c("lon","lat"), crs = sf::st_crs(4326)),
+              type = 'huc10')$huc10)
+        )
+      )
+    , by = "site_no"
+  )
+
+sites$COMID <- map_int(
+  sites$site_no,
+  ~nhdplusTools::discover_nhdplus_id(
+    nldi_feature = list(featureSource = "nwissite",
+                        featureID = paste0("USGS-",.x)))
+)
+
+#big object
+stp <- map_df(
+  sites$huc10,
+  ~read_csv(paste0("~/T/DFW-Team WDFW Watershed Synthesis - data_common/st_pred/st_pred_171100/st_pred_",.x,".csv")) |>
+  select(date = tim.date, COMID, st_pred = prd.stream_temp)
+  ) |>
+  drop_na(st_pred)
+
+#most of lower mainstem is coded 'artificial path' and not included in stp reaches
+#geographically closest to Mt Vernon gage is 24270292, but essentially mainstem where drainage from Barney Lake enters
+
+# sf_nhdp_wa_flw <- readRDS("~/T/DFW-Team WDFW Watershed Synthesis - flow_trees_heat/sf_nhdp_wa_flw.rds") |>
+#   sf::st_zm() 
+list(
+  flw = sf_nhdp_wa_flw |> 
+    #filter(between(COMID, sites$COMID[1], sites$COMID[2]))
+    #filter(between(COMID, 24270000,24275000))
+    filter(between(COMID, 24270200,24270300))
+  ,
+  usgs = sf::st_as_sf(sites, coords = c("lon","lat"), crs = sf::st_crs(4326)) |> sf::st_transform(sf::st_crs(sf_nhdp_wa_flw))
+) |> 
+  mapview::mapview()
+
+distinct(stp, COMID) |> 
+  inner_join(sites, by = "COMID")
+  # split(~site_no) |> 
+  # map(
+  #   ~left_join(
+  #     .x |> select(site_no, COMID),
+  #     stp,
+  #     by = "COMID") |> 
+  #     saveRDS(paste0("data/nwfsc_st_pred_",.x$site_no,".rds"))
+  # )
+
+```
+
+```{r data_rebuild_crc, eval=FALSE}
+mdb_file_path <- "~/T/DFW-Team WDFW Watershed Synthesis - data_common/crc/Sport Harvest Estimates 20230213.mdb"
+
+crc <- inner_join(
+  readr::read_csv(I(
+    system2(
+      "mdb-export",
+      args = paste(str_replace_all(mdb_file_path, " ", "\\\\ "),"Area"),
+      stdout = T)
+  ))
+  ,
+  readr::read_csv(I(
+    system2(
+      "mdb-export",
+      args = paste(str_replace_all(mdb_file_path, " ", "\\\\ "),"Catch"),
+      stdout = T)
+  ))
+  ,  by = "AreaID"
+) |>
+  select(
+    AreaCode, AreaName, AreaType, AreaWRIA,
+    CatchYear, CatchStatMonth, Species, CatchEst #, CatchVariance?
+  ) |>
+  rename_with(~tolower(.) |> str_remove("catch")) |>
+  filter(
+    #year >= 2000,
+    species %in% c("Coho","Chinook")
+  )
+
+#crc |> filter(between(as.integer(areacode), 810,840)) |> count(areacode, areaname) |>  print(n=Inf)
+
+sites$crc_areacode <- c("830") #also Sauk 828, Suiattle 832, Cascadde 826, Baker 824
+
+walk2(
+  sites$site_no,
+  sites$crc_areacode,
+  ~crc |> 
+    filter(areacode == .y) |> 
+    mutate(site_no = .x) |> 
+    saveRDS(file = paste0("data/wdfw_crc_",.x,".rds"))
+)
+
+```
+
+
+# About
+
+## Row
+
+::: {.card title="Daily flows - observed & forecast"}
+This card displays mean daily streamflow per-day-of-year overlaid by year, with the median per day across years for reference.
+
+In addition, [current predictions](https://wa.water.usgs.gov/projects/baseflows/BFS_downloads_index.html) and confidence intervals from the USGS WA Water Science Center near-term [baseflow forecast](https://www.usgs.gov/tools/baseflow-forecasts-selected-sites-united-states) are shown alongside National Water Model [(NWM)](https://water.noaa.gov/about/nwm) reach streamflow forecasts from NOAA's National Water Prediction Service [NWPS API](https://api.water.noaa.gov/nwps/v1/docs/). 
+
+As for all other cards:
+
+  - click the lower right corner to expand the card
+  
+  - double-click on any legend entry to highlight it (then single-click others to add individually or double-click again to return all) 
+  
+  - zoom to any area of interest.
+ 
+built `r Sys.time()`
+:::
+
+## Row
+
+::: {.card title="Annual low flows: Q10, Q05, Q01, Qmin"}
+This card displays per-year minimum values of daily mean streamflow volume in cfs (cubic feet per second) as measured at the USGS gaging stations (`r paste(unlist(unite(sites, col = "nn", sep = " ")), collapse = " & ")`).
+
+[`r sites$site_no[1]`](`r paste0('https://waterdata.usgs.gov/monitoring-location/',sites$site_no[1],'/#parameterCode=00060&period=P365D&showMedian=true')`)
+
+[`r sites$site_no[2]`](`r paste0('https://waterdata.usgs.gov/monitoring-location/',sites$site_no[2],'/#parameterCode=00060&period=P365D&showMedian=true')`)
+
+In addition to the annual minimum, per-year sample quantiles illustrate longer term relative differences at several low flow magnitudes. For example, ~90% of observed daily mean flows in a year were greater than and ~10% were less than the dark blue 'Q10'.
+:::
+
+::: {.card title="Annual Catch Record Card estimates"}
+This card displays annual estimated Chinook and coho recreational harvest in the [CRC](https://wdfw.wa.gov/licenses/fishing/catch-record-card) data records. 
+:::
+
+::: {.card title="Estimated daily stream temperatures, Siegel et al. 2023"}
+This card displays the [Siegel et al. 2023](https://journals.plos.org/water/article?id=10.1371/journal.pwat.0000119) estimated daily stream temperature for the medium resolution NHD+ COMID (flowline+local catchment) associated with the displayed USGS streamflow gage.
+
+Fitting to the NorWeST database, "This model reflects mechanistic processes using publicly available climate and landscape covariates in a Generalized Additive Model framework. We allowed covariates to interact while accounting for nonlinear relationships between temporal and spatial covariates to better capture seasonal patterns."
+
+Values displayed here are from the [publicly available datasets of results](https://zenodo.org/records/8174951).
+:::
+
+
+```{r, include=FALSE}
+i <- 1
+```
+
+# `r unite(sites,"no_nm")$no_nm[i]`
+
+## Row
+
+```{r}
+#| title: Flows - observed & forecast
+plot_q_dv(site = sites$site_no[i], log10 = T)
+```
+
+## Row
+
+```{r}
+#| title: Annual low flows
+plot_q_quant(sites$site_no[i])
+```
+
+```{r}
+#| title: Catch (CRC)
+plot_crc(sites$site_no[i])
+```
+
+```{r}
+#| title: Stream temp (Siegel et al. 2023)
+#plot_t_dv(sites$site_no[i])
+```
+
+
+
+```{r, include=FALSE}
+i <- 2
+```
+
+# `r unite(sites,"no_nm")$no_nm[i]`
+
+## Row
+
+```{r}
+#| title: Flows - observed & forecast
+plot_q_dv(site = sites$site_no[i], log10 = T)
+```
+
+## Row
+
+```{r}
+#| title: Annual low flows
+plot_q_quant(sites$site_no[i])
+```
+
+```{r}
+#| title: Catch (CRC)
+plot_crc(sites$site_no[i])
+```
+
+```{r}
+#| title: Stream temp (Siegel et al. 2023)
+#plot_t_dv(sites$site_no[i])
+```
+
