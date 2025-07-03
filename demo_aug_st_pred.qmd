@@ -1,0 +1,103 @@
+---
+title: "Stream temp: lm(aug_mean ~ year)"
+author: "dan.auerbach@dfw.wa.gov"
+date: "`r Sys.Date()`"
+format:
+  html:
+    embed-resources: true
+    theme: yeti 
+    code-fold: true
+    toc: true
+    toc-location: left
+    grid:
+      sidebar-width: 180px
+      body-width: 1100px
+      margin-width: 20px
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, fig.width = 8, fig.height = 10)
+
+library("tidyverse", quietly = T)
+library("sf")
+library("patchwork")
+library("gt")
+theme_set(theme_minimal()) 
+
+dir_data_common <- "~/T/DFW-Team WDFW Watershed Synthesis - data_common"
+epsg <- 2927 #WA state standard; NAD83(HARN)/ft
+
+```
+
+[Siegel et al. 2023](https://journals.plos.org/water/article?id=10.1371/journal.pwat.0000119) estimated daily stream temperature for the medium resolution NHD+ COMID (flowline+local catchment)
+Values here are from the [publicly available datasets of results](https://zenodo.org/records/8174951)
+
+```{r st_pred}
+##single HUC10 prediction file is n-COMIDs by n-days in 1990-2021
+##given sf_pts need to know point(s) HUC10 to figure out model prediction file
+##then need to know point(s) COMID since values are by COMID-day
+##but points/reach may or may not actually be in the dataset which excludes artificial paths etc.
+## HUC6 folders of HUC10s: 171100 - PS, 171001 - Coast
+
+#do not know designated uses, and not going to start with running 7day max
+#so formulate a simplistic quasi-category based on days over thresholds 16/18/20
+#to demo concept, rather than flow_dash approach of getting huc10 & COMID by service,
+#instead first summarize across COMIDs within HUC10
+
+h10 <- c(
+  "1710010301" #S Fork Chehalis
+)
+
+stp <- map_df(
+  h10
+  , 
+  ~read_csv(paste0("~/T/DFW-Team WDFW Watershed Synthesis - data_common/st_pred/st_pred_171001/st_pred_",.x,".csv")) |>
+    select(date = tim.date, COMID, st_pred = prd.stream_temp)
+  ) |> 
+  mutate(
+    year = lubridate::year(date),
+    month = lubridate::month(date),
+    yday = lubridate::yday(date)
+  )
+
+sf_flw <- readRDS("~/T/DFW-Team WDFW Watershed Synthesis - flow_trees_heat/sf_nhdp_wa_flw.rds") |>
+  sf::st_zm() |> 
+  inner_join(distinct(stp, COMID), by = "COMID")
+
+#stp |> count(COMID) |> filter(n!=11688) #n-days
+```
+
+```{r stp_08_lm}
+stp_08_lm <- stp |> 
+  filter(month == 8) |> 
+  summarise(
+    across(st_pred, list(mean = ~mean(., na.rm = T))),
+    .by = c(COMID, year, month)
+  ) |> 
+  nest(.by = COMID) |> 
+  mutate(
+    lm = map(data, ~lm(st_pred_mean ~ year, data = .x) |> 
+               broom::tidy())
+  ) |> 
+  unnest(lm) |> 
+  filter(term == "year") 
+
+#stp_08_lm |> ggplot() + geom_density(aes(statistic, color = p.value < 0.1))
+
+sf_flw_08_lm <- left_join(sf_flw, stp_08_lm |> select(-data), by = "COMID")
+```
+
+```{r gg_sf_flw_08_lm}
+ggplot() + 
+  geom_sf(data = sf_flw_08_lm, linewidth = .5, color = "lightblue") +
+  geom_sf(data = sf_flw_08_lm |> filter(p.value<=0.05),
+          aes(color = statistic)) +
+  wacolors::scale_color_wa_c()
+```
+
+```{r mv_sf_flw_08_lm}
+sf_flw_08_lm |> 
+  filter(p.value<=0.05) |> 
+  mapview::mapview(zcol = "statistic")
+
+```
